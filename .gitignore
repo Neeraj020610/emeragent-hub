@@ -1,0 +1,40 @@
+# Python & Virtual Environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+node_modules/
+.next/
+npm-debug.log*
+
+# Local Secrets, Databases & Runtime Artifacts
+.env
+backend/.env
+frontend/.env.local
+*.db
+*.sqlite
+*.sqlite3
+*.log
+storage/
+backend/storage/
+frontend/storage/
+frontend/public/login_snapshots/
+
+# Temporary Debug Screenshots & Ad-hoc Verification Scripts
+/*.png
+backend/*.png
+backend/debug_*.py
+backend/inspect_*.py
+backend/take_*.py
+backend/test_*scrape*.py
+backend/upgrade_videos.py
+.DS_Store
+Thumbs.db
+
