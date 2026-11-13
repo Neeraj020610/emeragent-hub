@@ -126,6 +126,8 @@ function AccountsContent() {
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [accountToDelete, setAccountToDelete] = useState<AccountItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [newIdentifier, setNewIdentifier] = useState("");
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
@@ -582,6 +584,21 @@ function AccountsContent() {
     }
   };
 
+  const handleDeleteAccount = async () => {
+    if (!accountToDelete) return;
+    setIsDeleting(true);
+    try {
+      await apiFetch(`/accounts/${accountToDelete.id}`, { method: "DELETE" });
+      setAccountToDelete(null);
+      await loadAccounts();
+      await loadSessions();
+    } catch (err: any) {
+      alert("Failed to delete account: " + (err.message || err));
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const filteredAccounts = accounts.filter(
     (a) =>
       a.account_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -589,9 +606,39 @@ function AccountsContent() {
       (a.email && a.email.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
-  const renderConnectionBadge = (status: string) => {
-    const s = (status || "").toUpperCase();
-    if (s === "CONNECTED" || s === "AUTHENTICATED" || s === "ACTIVE") {
+  // Strict Active Worker: Account must have a verified positive credit balance
+  const activeWorkerCandidates = accounts
+    .filter(
+      (a) =>
+        ((a.connection_status || "").toUpperCase() === "CONNECTED" || (a.connection_status || "").toUpperCase() === "ACTIVE") &&
+        a.latest_credit_balance !== null &&
+        Number(a.latest_credit_balance) > 0
+    )
+    .sort((a, b) => a.id - b.id);
+
+  const activeWorkerId = activeWorkerCandidates.length > 0 ? activeWorkerCandidates[0].id : null;
+
+  // Standby Queue: other verified accounts with positive credits, ordered strictly FIFO by account.id
+  const standbyAccounts = accounts
+    .filter(
+      (a) =>
+        a.id !== activeWorkerId &&
+        ((a.connection_status || "").toUpperCase() === "STANDBY" || (a.connection_status || "").toUpperCase() === "CONNECTED") &&
+        a.latest_credit_balance !== null &&
+        Number(a.latest_credit_balance) > 0
+    )
+    .sort((a, b) => a.id - b.id);
+
+  const standbyQueueMap: Record<number, number> = {};
+  standbyAccounts.forEach((a, idx) => {
+    standbyQueueMap[a.id] = idx + 1;
+  });
+
+  const renderConnectionBadge = (acc: AccountItem) => {
+    const s = (acc.connection_status || "").toUpperCase();
+
+    // 1. Strict Active Worker Gate
+    if (acc.id === activeWorkerId) {
       return (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
@@ -599,15 +646,28 @@ function AccountsContent() {
         </span>
       );
     }
+
+    // 2. FIFO Standby Queue
+    if (standbyQueueMap[acc.id] !== undefined) {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+          <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+          Standby (Queue #{standbyQueueMap[acc.id]})
+        </span>
+      );
+    }
+
     if (s === "STANDBY" || s === "IDLE") {
       return (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
           <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-          Standby (Queue)
+          Standby
         </span>
       );
     }
-    if (s === "EXHAUSTED" || s === "CREDITS_FINISHED") {
+
+    // 3. Credits Finished
+    if (s === "EXHAUSTED" || s === "CREDITS_FINISHED" || (acc.latest_credit_balance !== null && Number(acc.latest_credit_balance) <= 0 && (s === "CONNECTED" || s === "STANDBY"))) {
       return (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-rose-50 text-rose-800 border border-rose-200">
           <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
@@ -615,6 +675,8 @@ function AccountsContent() {
         </span>
       );
     }
+
+    // 4. In-progress states
     if (s === "LOGIN_IN_PROGRESS" || s === "PENDING" || s === "PENDING_VERIFICATION") {
       return (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
@@ -623,6 +685,7 @@ function AccountsContent() {
         </span>
       );
     }
+
     if (s === "OTP_REQUIRED") {
       return (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
@@ -631,6 +694,7 @@ function AccountsContent() {
         </span>
       );
     }
+
     if (s === "LOGIN_FAILED" || s === "ERROR") {
       return (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
@@ -639,7 +703,8 @@ function AccountsContent() {
         </span>
       );
     }
-    // Default for any unauthenticated / disconnected state:
+
+    // Default: Login Required
     return (
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-amber-50 text-amber-900 border border-amber-300 shadow-2xs">
         <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />
@@ -774,7 +839,7 @@ function AccountsContent() {
                     </td>
                     <td className="px-4 py-3 font-mono text-[11px]">{acc.auth_type}</td>
                     <td className="px-4 py-3">
-                      {renderConnectionBadge(acc.connection_status)}
+                      {renderConnectionBadge(acc)}
                     </td>
                     <td className="px-4 py-3 font-mono font-semibold text-slate-900">
                       {acc.latest_credit_balance !== null && acc.latest_credit_balance !== undefined && Number(acc.latest_credit_balance) > 0 ? (
@@ -821,6 +886,14 @@ function AccountsContent() {
                         >
                           Details →
                         </Link>
+                        <button
+                          type="button"
+                          onClick={() => setAccountToDelete(acc)}
+                          className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                          title="Delete Account"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -1516,6 +1589,67 @@ function AccountsContent() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* DELETE ACCOUNT CONFIRMATION MODAL */}
+      {accountToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 relative animate-in zoom-in-95 duration-200">
+            <button
+              onClick={() => !isDeleting && setAccountToDelete(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
+              title="Close"
+              disabled={isDeleting}
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center gap-3 text-rose-600 mb-3">
+              <div className="p-2.5 bg-rose-100 rounded-xl">
+                <Trash2 className="w-5 h-5 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Delete Emergent Account</h3>
+                <p className="text-xs text-slate-500">Permanent fleet & profile removal</p>
+              </div>
+            </div>
+
+            <div className="my-4 p-3.5 bg-rose-50/70 border border-rose-200 rounded-xl space-y-2 text-xs">
+              <div className="font-semibold text-rose-950">
+                Are you sure you want to permanently delete:
+              </div>
+              <div className="text-slate-800 font-bold text-sm">
+                {accountToDelete.account_name}
+              </div>
+              <div className="font-mono text-[11px] text-slate-600">
+                Identifier: {accountToDelete.account_identifier} • Email: {accountToDelete.email || "N/A"}
+              </div>
+              <p className="text-[11px] text-rose-700 pt-1 leading-relaxed">
+                ⚠️ This will delete this account from the fleet, destroy its isolated browser profile directory, wipe credit ledgers, and auto-promote the next eligible standby worker.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setAccountToDelete(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleDeleteAccount}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white transition-colors shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeleting ? "Deleting..." : "Delete Permanently"}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

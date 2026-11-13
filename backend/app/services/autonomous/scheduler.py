@@ -214,8 +214,8 @@ class AccountCreditScheduler:
             logger.warning("No eligible account found with active session or available credits.")
             return None
 
-        # Sort: active worker first, then highest remaining balance
-        candidates.sort(key=lambda x: (x[3], x[2]), reverse=True)
+        # Sort: currently active worker first (-x[3]), then strict FIFO creation order (x[0].id ASC)
+        candidates.sort(key=lambda x: (-x[3], x[0].id))
         selected_acc, selected_budget, _, _ = candidates[0]
         return selected_acc, selected_budget
 

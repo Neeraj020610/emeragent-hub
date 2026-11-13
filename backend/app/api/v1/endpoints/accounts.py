@@ -364,16 +364,28 @@ def update_account(
     return _format_account_response(account, db)
 
 
-@router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{account_id}")
 def delete_account(
     account_id: int,
     request: Request,
-    current_user: User = Depends(require_role(["ADMIN"])),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
     db: Session = Depends(get_db),
 ):
+    import os, shutil
+    from app.models.session import AccountSession
+    from app.models.credit import CreditSnapshot, CreditEvent
+    from app.models.autonomous import AccountCreditBudget, AutonomousTask
+    from app.models.otp import OtpRequest
+    from app.models.universal_key import UniversalApiKey
+    from app.services.session.manager import MultiAccountSessionManager
+
     account = db.query(EmergentAccount).filter(EmergentAccount.id == account_id).first()
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found.")
+
+    acc_name = account.account_name or f"Account #{account_id}"
+    acc_ident = account.account_identifier or f"EMG-{account_id}"
+    was_active = (account.connection_status or "").upper() in ["CONNECTED", "ACTIVE"]
 
     record_audit(
         db=db,
@@ -382,12 +394,49 @@ def delete_account(
         resource_id=str(account.id),
         user_id=current_user.id,
         ip_address=request.client.host if request.client else None,
-        details=f"Deleted Emergent account {account.account_identifier}",
+        details=f"Deleted Emergent account '{acc_name}' ({acc_ident}) and purged all child sessions/data.",
     )
 
+    # 1. Cascade delete all child/linked records
+    db.query(AccountSession).filter(AccountSession.account_id == account_id).delete(synchronize_session=False)
+    db.query(CreditSnapshot).filter(CreditSnapshot.account_id == account_id).delete(synchronize_session=False)
+    db.query(AccountCreditBudget).filter(AccountCreditBudget.account_id == account_id).delete(synchronize_session=False)
+    db.query(AccountPermission).filter(AccountPermission.account_id == account_id).delete(synchronize_session=False)
+    db.query(AccountConnection).filter(AccountConnection.account_id == account_id).delete(synchronize_session=False)
+    db.query(OtpRequest).filter(OtpRequest.account_id == account_id).delete(synchronize_session=False)
+    db.query(CreditEvent).filter(CreditEvent.account_id == account_id).delete(synchronize_session=False)
+    db.query(UniversalApiKey).filter(UniversalApiKey.account_id == account_id).delete(synchronize_session=False)
+    db.query(AutonomousTask).filter(AutonomousTask.assigned_account_id == account_id).update({"assigned_account_id": None}, synchronize_session=False)
+
+    # 2. Delete parent account
     db.delete(account)
     db.commit()
-    return None
+
+    # 3. Clean up physical browser profile on disk
+    try:
+        manager = MultiAccountSessionManager()
+        profile_dir = manager._get_browser_profile_dir(account_id)
+        if profile_dir and os.path.exists(profile_dir):
+            shutil.rmtree(profile_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+    # 4. If the deleted account was active worker, promote next eligible FIFO account
+    if was_active:
+        from app.services.session.failover_service import enforce_single_active_account
+        next_acc = (
+            db.query(EmergentAccount)
+            .filter(
+                EmergentAccount.connection_status.in_(["STANDBY", "CONNECTED"]),
+                EmergentAccount.status == "active",
+            )
+            .order_by(EmergentAccount.id.asc())
+            .first()
+        )
+        if next_acc:
+            enforce_single_active_account(next_acc.id)
+
+    return {"status": "SUCCESS", "message": f"Account '{acc_name}' and all associated profiles/records deleted successfully."}
 
 
 @router.post("/{account_id}/sync")
