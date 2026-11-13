@@ -164,7 +164,7 @@ def list_accounts(
 def create_account(
     request: Request,
     payload: EmergentAccountCreate,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER", "EXECUTIVE"])),
     db: Session = Depends(get_db),
 ):
     import uuid
@@ -380,7 +380,7 @@ def update_account(
 def delete_account(
     account_id: int,
     request: Request,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN"])),
     db: Session = Depends(get_db),
 ):
     import os, shutil
@@ -455,7 +455,7 @@ def delete_account(
 def sync_account_connection(
     account_id: int,
     request: Request,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER", "EXECUTIVE"])),
     db: Session = Depends(get_db),
 ):
     account = db.query(EmergentAccount).filter(EmergentAccount.id == account_id).first()
@@ -494,7 +494,7 @@ def connect_account(
     account_id: int,
     request: Request,
     auth_code: Optional[str] = Query(None, description="Optional OAuth authorization code"),
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER", "EXECUTIVE"])),
     db: Session = Depends(get_db),
 ):
     account = db.query(EmergentAccount).filter(EmergentAccount.id == account_id).first()
@@ -548,7 +548,7 @@ def get_account_connection(
 def reconnect_account(
     account_id: int,
     request: Request,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER", "EXECUTIVE"])),
     db: Session = Depends(get_db),
 ):
     account = db.query(EmergentAccount).filter(EmergentAccount.id == account_id).first()
@@ -573,7 +573,7 @@ def reconnect_account(
 def disconnect_account(
     account_id: int,
     request: Request,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER", "EXECUTIVE"])),
     db: Session = Depends(get_db),
 ):
     account = db.query(EmergentAccount).filter(EmergentAccount.id == account_id).first()
@@ -634,7 +634,7 @@ def assign_account_member(
     account_id: int,
     request: Request,
     payload: AccountMemberAssignRequest,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN"])),
     db: Session = Depends(get_db),
 ):
     account = db.query(EmergentAccount).filter(EmergentAccount.id == account_id).first()
@@ -705,7 +705,7 @@ def remove_account_member(
     account_id: int,
     user_id: int,
     request: Request,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN"])),
     db: Session = Depends(get_db),
 ):
     account = db.query(EmergentAccount).filter(EmergentAccount.id == account_id).first()

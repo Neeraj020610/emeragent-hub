@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { INITIAL_ACCOUNTS, AccountItem } from "@/lib/mockData";
-import { apiFetch, API_BASE_URL } from "@/lib/api";
+import { apiFetch, API_BASE_URL, getSession } from "@/lib/api";
 import {
   Server,
   Plus,
@@ -121,6 +121,16 @@ function AccountsContent() {
           : "directory";
 
   const [activeTab, setActiveTab] = useState<"directory" | "sessions" | "otp" | "keys">(initialTab);
+  const [currentUserRole, setCurrentUserRole] = useState("ADMIN");
+
+  useEffect(() => {
+    const session = getSession();
+    if (session?.role) {
+      setCurrentUserRole(session.role);
+    }
+  }, []);
+
+  const isExecutive = currentUserRole === "EXECUTIVE";
 
   // --- Directory State ---
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
@@ -930,14 +940,16 @@ function AccountsContent() {
                         >
                           Details →
                         </Link>
-                        <button
-                          type="button"
-                          onClick={() => setAccountToDelete(acc)}
-                          className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
-                          title="Delete Account"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        {!isExecutive && (
+                          <button
+                            type="button"
+                            onClick={() => setAccountToDelete(acc)}
+                            className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                            title="Delete Account (Admin Only)"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

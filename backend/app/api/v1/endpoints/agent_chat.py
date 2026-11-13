@@ -168,6 +168,13 @@ def send_message(
     if not conv:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
 
+    user_role_name = current_user.role.name if current_user.role else ""
+    if user_role_name == "EXECUTIVE":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access Denied: Executive accounts are restricted to Account Registration and Fleet Onboarding. Video and AI task generation is reserved for Admin.",
+        )
+
     reply = chat_service.process_user_message(
         conversation=conv,
         prompt=payload.prompt,

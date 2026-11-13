@@ -15,6 +15,7 @@ def init_db(db: Session, seed_demo: bool = False) -> None:
     # 1. Seed Roles
     roles_data = [
         ("ADMIN", "Full platform access and management privileges", "all:manage"),
+        ("EXECUTIVE", "Register and onboard fleet accounts, verify OTP, view fleet status", "accounts:register,accounts:view,otp:verify"),
         ("MANAGER", "Manage authorized accounts, projects, and jobs", "accounts:view,projects:manage,jobs:manage"),
         ("MEMBER", "View assigned accounts and submit authorized build requests", "accounts:view,jobs:submit"),
     ]
@@ -27,6 +28,7 @@ def init_db(db: Session, seed_demo: bool = False) -> None:
     db.commit()
 
     admin_role = db.query(Role).filter(Role.name == "ADMIN").first()
+    exec_role = db.query(Role).filter(Role.name == "EXECUTIVE").first()
 
     # 2. Seed Initial Admin User if none exists
     admin_user = db.query(User).filter(User.email == settings.INITIAL_ADMIN_EMAIL).first()
@@ -42,6 +44,21 @@ def init_db(db: Session, seed_demo: bool = False) -> None:
         db.add(admin_user)
         db.commit()
         db.refresh(admin_user)
+
+    # 2b. Seed Initial Executive User if none exists
+    exec_user = db.query(User).filter(User.email == "executive@emergent-hub.com").first()
+    if not exec_user and exec_role:
+        exec_user = User(
+            email="executive@emergent-hub.com",
+            hashed_password=hash_password("Executive2026!"),
+            full_name="Fleet Operations Executive",
+            role_id=exec_role.id,
+            is_active=True,
+            is_verified=True,
+        )
+        db.add(exec_user)
+        db.commit()
+        db.refresh(exec_user)
 
     # 3. Seed demo accounts ONLY if explicitly requested (e.g. unit test suite)
     if seed_demo and db.query(EmergentAccount).count() == 0:

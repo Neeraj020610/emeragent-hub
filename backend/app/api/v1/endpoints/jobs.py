@@ -63,7 +63,7 @@ def list_build_jobs(
 def create_build_job(
     request: Request,
     payload: BuildJobCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
     db: Session = Depends(get_db),
 ):
     """
@@ -100,7 +100,7 @@ def get_build_job(
 def start_build_job(
     job_id: int,
     request: Request,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
     db: Session = Depends(get_db),
 ):
     """Transitions a DRAFT build into the QUEUED execution state."""
@@ -120,7 +120,7 @@ def start_build_job(
 def execute_build_job_direct(
     job_id: int,
     request: Request,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
     db: Session = Depends(get_db),
 ):
     """Starts and immediately runs the build job through the execution queue engine."""

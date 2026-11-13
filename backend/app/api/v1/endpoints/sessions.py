@@ -50,7 +50,7 @@ def authenticate_account_session(
     account_id: int,
     payload: AccountSessionAuthenticateRequest,
     request: Request,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER", "EXECUTIVE"])),
     db: Session = Depends(get_db),
 ):
     """
@@ -129,7 +129,7 @@ def launch_isolated_browser(
 def disconnect_account_session(
     account_id: int,
     request: Request,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER", "EXECUTIVE"])),
     db: Session = Depends(get_db),
 ):
     """
@@ -149,7 +149,7 @@ def disconnect_account_session(
 def revoke_account_session(
     account_id: int,
     request: Request,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER", "EXECUTIVE"])),
     db: Session = Depends(get_db),
 ):
     """Revokes session tokens and purges isolated browser profile state."""
@@ -167,7 +167,7 @@ async def secure_account_login(
     account_id: int,
     payload: AccountSessionSecureLoginRequest,
     request: Request,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER", "EXECUTIVE"])),
     db: Session = Depends(get_db),
 ):
     """
@@ -202,7 +202,7 @@ async def submit_manual_otp(
     account_id: int,
     payload: AccountSessionSubmitOTPRequest,
     request: Request,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER", "EXECUTIVE"])),
     db: Session = Depends(get_db),
 ):
     """Submits manual OTP code and marks session verified ACTIVE ONLY IF genuinely verified on Emergent."""
@@ -233,7 +233,7 @@ async def submit_manual_otp(
 async def confirm_dashboard_verification(
     account_id: int,
     request: Request,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER", "EXECUTIVE"])),
     db: Session = Depends(get_db),
 ):
     """Confirms authenticated Emergent dashboard was opened in isolated browser and marks session ACTIVE."""
@@ -260,7 +260,7 @@ async def start_automated_login(
     account_id: int,
     payload: AccountSessionSecureLoginRequest,
     request: Request,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER", "EXECUTIVE"])),
     db: Session = Depends(get_db),
 ):
     """
@@ -343,7 +343,7 @@ def get_login_progress(
 def abort_account_login(
     account_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER", "EXECUTIVE"])),
 ):
     """
     Aborts in-progress login attempt. Cancels automation state and restores account to DISCONNECTED.
@@ -375,7 +375,7 @@ def abort_account_login(
 async def sync_account_credits(
     account_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER", "EXECUTIVE"])),
 ):
     """
     Queries active Emergent session to scrape real-time credit balance and saves a CreditSnapshot.

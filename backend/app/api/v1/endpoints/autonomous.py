@@ -71,7 +71,7 @@ def get_autonomous_status(
 @router.post("/control", response_model=AutonomousSystemStateResponse)
 def control_autonomous_system(
     payload: SystemControlRequest,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN"])),
     db: Session = Depends(get_db),
 ):
     """Executes a system-level control command: START, PAUSE, RESUME, STOP."""
@@ -110,7 +110,7 @@ def control_autonomous_system(
 @router.post("/chat", response_model=SystemChatCommandResponse)
 def execute_chat_command(
     payload: SystemChatCommandRequest,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN"])),
     db: Session = Depends(get_db),
 ):
     """Conversational natural command interpreter (e.g. 'START', 'PAUSE', 'STATUS', 'ROTATE')."""
@@ -137,7 +137,7 @@ def execute_chat_command(
 @router.post("/instructions", response_model=AutonomousInstructionResponse)
 def create_instruction(
     payload: AutonomousInstructionCreate,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN"])),
     db: Session = Depends(get_db),
 ):
     """Registers an administrator-defined reusable instruction for Video or Web/App development."""
@@ -164,7 +164,7 @@ def list_instructions(
 @router.post("/instructions/{instruction_id}/plan", response_model=List[AutonomousTaskResponse])
 def generate_plan_from_instruction(
     instruction_id: int,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN"])),
     db: Session = Depends(get_db),
 ):
     """Autonomous Brain plan generator: converts instruction into bounded actionable tasks."""
@@ -205,7 +205,7 @@ def list_tasks(
 @router.post("/tasks", response_model=AutonomousTaskResponse)
 def create_manual_task(
     payload: AutonomousTaskCreate,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN"])),
     db: Session = Depends(get_db),
 ):
     """Manually supplies a single task to the autonomous pipeline."""
@@ -216,7 +216,7 @@ def create_manual_task(
 @router.post("/tasks/import", response_model=List[AutonomousTaskResponse])
 def import_tasks_bulk(
     payload: AutonomousTaskImportRequest,
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN"])),
     db: Session = Depends(get_db),
 ):
     """Bulk imports a queue of manual/external tasks into the pipeline."""
@@ -406,7 +406,7 @@ def update_account_budget(
 @router.post("/worker/step")
 def trigger_worker_step(
     task_id: Optional[int] = Query(None),
-    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    current_user: User = Depends(require_role(["ADMIN"])),
     db: Session = Depends(get_db),
 ):
     """

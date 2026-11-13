@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { setSession } from "@/lib/api";
-import { Layers, ShieldCheck, Lock, Mail, ArrowRight, AlertCircle } from "lucide-react";
+import { Layers, ShieldCheck, Lock, Mail, ArrowRight, AlertCircle, Shield, UserCheck } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -12,13 +12,24 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  const selectRolePreset = (role: "ADMIN" | "EXECUTIVE") => {
+    if (role === "ADMIN") {
+      setEmail("admin@emergent-hub.com");
+      setPassword("EmergentAdmin2026!");
+    } else {
+      setEmail("executive@emergent-hub.com");
+      setPassword("Executive2026!");
+    }
+    setError(null);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
 
     try {
-      const res = await fetch("http://localhost:8000/api/v1/auth/login", {
+      const res = await fetch("/api/v1/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -33,7 +44,7 @@ export default function LoginPage() {
       setSession(data);
       router.push("/");
     } catch (err: any) {
-      // In offline/standalone demo mode, allow fallback admin entry with clear notice
+      // In offline/standalone fallback mode, verify preset credentials
       if (email === "admin@emergent-hub.com" && password === "EmergentAdmin2026!") {
         setSession({
           access_token: "offline_demo_admin_jwt",
@@ -43,6 +54,15 @@ export default function LoginPage() {
           user_id: 1,
         });
         router.push("/");
+      } else if (email === "executive@emergent-hub.com" && password === "Executive2026!") {
+        setSession({
+          access_token: "offline_demo_exec_jwt",
+          role: "EXECUTIVE",
+          email: "executive@emergent-hub.com",
+          full_name: "Fleet Operations Executive",
+          user_id: 2,
+        });
+        router.push("/");
       } else {
         setError(err.message || "Invalid email or password.");
       }
@@ -50,6 +70,9 @@ export default function LoginPage() {
       setIsLoading(false);
     }
   };
+
+  const isCurrentAdmin = email === "admin@emergent-hub.com";
+  const isCurrentExec = email === "executive@emergent-hub.com";
 
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -64,12 +87,52 @@ export default function LoginPage() {
 
           <div className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-900/60 text-blue-300 border border-blue-700/50">
             <ShieldCheck className="w-3 h-3 text-teal-400" />
-            Phase 1 Foundation Security
+            Role-Based Access Control (RBAC)
+          </div>
+        </div>
+
+        {/* Quick Role Selector Buttons */}
+        <div className="px-8 pt-6 pb-2">
+          <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2 block">
+            Select Role to Test:
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => selectRolePreset("ADMIN")}
+              className={`p-2.5 rounded-xl border text-left transition-all ${
+                isCurrentAdmin
+                  ? "bg-purple-50 border-purple-300 text-purple-900 shadow-xs ring-2 ring-purple-500/20"
+                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              <div className="flex items-center gap-1.5 text-xs font-bold">
+                <Shield className="w-3.5 h-3.5 text-purple-600" />
+                <span>Admin</span>
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">Video & Full Control</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => selectRolePreset("EXECUTIVE")}
+              className={`p-2.5 rounded-xl border text-left transition-all ${
+                isCurrentExec
+                  ? "bg-blue-50 border-blue-300 text-blue-900 shadow-xs ring-2 ring-blue-500/20"
+                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              <div className="flex items-center gap-1.5 text-xs font-bold">
+                <UserCheck className="w-3.5 h-3.5 text-blue-600" />
+                <span>Executive</span>
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">Account Registration</div>
+            </button>
           </div>
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-8 space-y-5">
+        <form onSubmit={handleSubmit} className="px-8 pb-8 pt-3 space-y-4">
           {error && (
             <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 flex items-start gap-2">
               <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
@@ -107,19 +170,20 @@ export default function LoginPage() {
             </div>
           </div>
 
-          {/* Preset Helper */}
-          <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs space-y-1">
-            <div className="font-semibold text-slate-700">Default Administrator Credentials:</div>
-            <div className="text-slate-600 font-mono text-[11px]">admin@emergent-hub.com</div>
-            <div className="text-slate-600 font-mono text-[11px]">EmergentAdmin2026!</div>
+          <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-600">
+            {isCurrentAdmin ? (
+              <div>👑 <strong>Admin Mode:</strong> Has video generation access, task planning, and account deletion permissions.</div>
+            ) : (
+              <div>👤 <strong>Executive Mode:</strong> Restricted to registering new Emergent accounts and OTP verification. Video generation is blocked.</div>
+            )}
           </div>
 
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full py-2.5 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm shadow-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+            className="w-full py-2.5 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm shadow-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-50 cursor-pointer"
           >
-            <span>{isLoading ? "Authenticating..." : "Sign in to Hub"}</span>
+            <span>{isLoading ? "Authenticating..." : `Sign in as ${isCurrentAdmin ? "Admin" : "Executive"}`}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
@@ -131,4 +195,3 @@ export default function LoginPage() {
     </div>
   );
 }
-
