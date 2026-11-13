@@ -1167,7 +1167,7 @@ function BuildsContent() {
                                 title="Click to open full live view"
                               >
                                 <img
-                                  src={`http://localhost:8000/api/v1/autonomous/tasks/${msg.task_id}/preview-image?t=${Math.floor(Date.now() / 4000)}`}
+                                  src={`/api/v1/autonomous/tasks/${msg.task_id}/preview-image?t=${Math.floor(Date.now() / 4000)}`}
                                   alt="Live Emergent progress"
                                   className="w-full max-h-56 object-contain bg-slate-950"
                                   onError={(e) => {
@@ -1734,7 +1734,7 @@ function BuildsContent() {
                       {isRealGenerating ? (
                         <div className="relative aspect-video rounded-xl bg-slate-900 border border-slate-800 overflow-hidden flex flex-col justify-center items-center">
                           <img
-                            src={`http://localhost:8000/api/v1/autonomous/tasks/${activeArtifactTask.id}/preview-image?t=${Date.now()}`}
+                            src={`/api/v1/autonomous/tasks/${activeArtifactTask.id}/preview-image?t=${Date.now()}`}
                             alt="Live Emergent Video Progress"
                             className="w-full h-full object-contain"
                           />
@@ -1747,7 +1747,7 @@ function BuildsContent() {
                             playsInline
                             preload="auto"
                             className="w-full h-full object-contain"
-                            src={`http://localhost:8000/api/v1/autonomous/tasks/${activeArtifactTask.id}/video`}
+                            src={`/api/v1/autonomous/tasks/${activeArtifactTask.id}/video`}
                           >
                             Your browser does not support the video tag.
                           </video>
@@ -1763,7 +1763,7 @@ function BuildsContent() {
                           </div>
 
                           <a
-                            href={`http://localhost:8000/api/v1/autonomous/tasks/${activeArtifactTask.id}/video`}
+                            href={`/api/v1/autonomous/tasks/${activeArtifactTask.id}/video`}
                             download={`${activeArtifactTask.task_identifier}.mp4`}
                             target="_blank"
                             rel="noreferrer"
@@ -1793,7 +1793,7 @@ function BuildsContent() {
                       <div className="relative aspect-video rounded-xl bg-white border border-slate-800 overflow-hidden shadow-2xl">
                         <iframe
                           key={`web-${activeArtifactTask.id}`}
-                          src={`http://localhost:8000/api/v1/autonomous/tasks/${activeArtifactTask.id}/webapp`}
+                          src={`/api/v1/autonomous/tasks/${activeArtifactTask.id}/webapp`}
                           className="w-full h-full border-0"
                           title={activeArtifactTask.title}
                         />
@@ -1805,7 +1805,7 @@ function BuildsContent() {
                         </div>
                         <div className="flex items-center gap-2">
                           <a
-                            href={`http://localhost:8000/api/v1/autonomous/tasks/${activeArtifactTask.id}/webapp`}
+                            href={`/api/v1/autonomous/tasks/${activeArtifactTask.id}/webapp`}
                             target="_blank"
                             rel="noreferrer"
                             className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs flex items-center gap-1.5 transition-colors"
@@ -1814,7 +1814,7 @@ function BuildsContent() {
                             Open Full App
                           </a>
                           <a
-                            href={`http://localhost:8000/api/v1/autonomous/tasks/${activeArtifactTask.id}/webapp?download=true`}
+                            href={`/api/v1/autonomous/tasks/${activeArtifactTask.id}/webapp?download=true`}
                             download={`${activeArtifactTask.task_identifier}-app.html`}
                             className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs flex items-center gap-1.5 shadow-md transition-colors"
                           >
