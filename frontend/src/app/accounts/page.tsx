@@ -634,7 +634,50 @@ function AccountsContent() {
     standbyQueueMap[a.id] = idx + 1;
   });
 
-  const renderConnectionBadge = (acc: AccountItem) => {
+  const renderConnectionBadge = (itemOrStatus: AccountItem | string) => {
+    if (typeof itemOrStatus === "string") {
+      const s = (itemOrStatus || "").toUpperCase();
+      if (s === "CONNECTED" || s === "ACTIVE" || s === "AUTHENTICATED") {
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+            Active Session
+          </span>
+        );
+      }
+      if (s === "STANDBY" || s === "IDLE") {
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+            Standby
+          </span>
+        );
+      }
+      if (s === "EXHAUSTED" || s === "CREDITS_FINISHED" || s === "EXPIRED") {
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-rose-50 text-rose-800 border border-rose-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+            Session Expired
+          </span>
+        );
+      }
+      if (s === "LOGIN_IN_PROGRESS" || s === "PENDING" || s === "PENDING_VERIFICATION") {
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping" />
+            Login in Progress
+          </span>
+        );
+      }
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-amber-50 text-amber-900 border border-amber-300 shadow-2xs">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />
+          Login Required
+        </span>
+      );
+    }
+
+    const acc = itemOrStatus;
     const s = (acc.connection_status || "").toUpperCase();
 
     // 1. Strict Active Worker Gate

@@ -375,7 +375,7 @@ def delete_account(
     from app.models.session import AccountSession
     from app.models.credit import CreditSnapshot, CreditEvent
     from app.models.autonomous import AccountCreditBudget, AutonomousTask
-    from app.models.otp import OtpRequest
+    from app.models.otp import OTPRequest
     from app.models.universal_key import UniversalApiKey
     from app.services.session.manager import MultiAccountSessionManager
 
@@ -403,7 +403,7 @@ def delete_account(
     db.query(AccountCreditBudget).filter(AccountCreditBudget.account_id == account_id).delete(synchronize_session=False)
     db.query(AccountPermission).filter(AccountPermission.account_id == account_id).delete(synchronize_session=False)
     db.query(AccountConnection).filter(AccountConnection.account_id == account_id).delete(synchronize_session=False)
-    db.query(OtpRequest).filter(OtpRequest.account_id == account_id).delete(synchronize_session=False)
+    db.query(OTPRequest).filter(OTPRequest.account_id == account_id).delete(synchronize_session=False)
     db.query(CreditEvent).filter(CreditEvent.account_id == account_id).delete(synchronize_session=False)
     db.query(UniversalApiKey).filter(UniversalApiKey.account_id == account_id).delete(synchronize_session=False)
     db.query(AutonomousTask).filter(AutonomousTask.assigned_account_id == account_id).update({"assigned_account_id": None}, synchronize_session=False)
