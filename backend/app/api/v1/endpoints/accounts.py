@@ -30,12 +30,24 @@ emergent_integration_service = EmergentIntegrationService()
 
 
 def _format_account_response(acc: EmergentAccount, db: Session) -> EmergentAccountResponse:
+    from app.models.autonomous import AccountCreditBudget
+    budget = db.query(AccountCreditBudget).filter(AccountCreditBudget.account_id == acc.id).first()
     latest_snap = (
         db.query(CreditSnapshot)
         .filter(CreditSnapshot.account_id == acc.id)
         .order_by(CreditSnapshot.recorded_at.desc())
         .first()
     )
+    
+    # Check if account is connected / standby
+    is_live = (acc.connection_status or "").upper() in ("CONNECTED", "STANDBY", "ACTIVE")
+    latest_balance = None
+    if is_live:
+        if budget and budget.verified_current_balance is not None and budget.verified_current_balance > 0:
+            latest_balance = budget.verified_current_balance
+        elif latest_snap and latest_snap.available_credits is not None:
+            latest_balance = latest_snap.available_credits
+
     members_count = db.query(AccountPermission).filter(AccountPermission.account_id == acc.id).count()
     conn = db.query(AccountConnection).filter(AccountConnection.account_id == acc.id).first()
     from app.models.universal_key import UniversalApiKey
@@ -80,7 +92,7 @@ def _format_account_response(acc: EmergentAccount, db: Session) -> EmergentAccou
         last_synced_at=acc.last_synced_at,
         created_at=acc.created_at,
         updated_at=acc.updated_at,
-        latest_credit_balance=latest_snap.available_credits if latest_snap else None,
+        latest_credit_balance=latest_balance,
         assigned_members_count=members_count,
         has_universal_key=uni_keys_count > 0,
         universal_keys_count=uni_keys_count,

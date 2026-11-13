@@ -129,26 +129,18 @@ export default function CreditsPage() {
     }
   };
 
-  // Sync all connected accounts
+  // Sync all connected accounts in parallel
   const handleSyncAll = async () => {
     setIsSyncingAll(true);
     try {
-      const eligible = budgets.filter((b) => b.is_eligible || b.balance_source?.toUpperCase().includes("PROVIDER"));
-      if (eligible.length === 0) {
-        // Fallback: sync all accounts
-        for (const b of budgets) {
-          try {
-            await apiFetch(`/sessions/${b.account_id}/sync-credits`, { method: "POST" });
-          } catch {}
-        }
-      } else {
-        for (const b of eligible) {
-          try {
-            await apiFetch(`/sessions/${b.account_id}/sync-credits`, { method: "POST" });
-          } catch {}
-        }
-      }
+      const targets = budgets.filter((b) => b.is_eligible || b.balance_source?.toUpperCase().includes("PROVIDER"));
+      const listToSync = targets.length > 0 ? targets : budgets;
+      await Promise.allSettled(
+        listToSync.map((b) => apiFetch(`/sessions/${b.account_id}/sync-credits`, { method: "POST" }))
+      );
       await loadCreditTelemetry();
+    } catch (err: any) {
+      console.error("Sync all error:", err);
     } finally {
       setIsSyncingAll(false);
     }
@@ -238,11 +230,12 @@ export default function CreditsPage() {
   };
 
   // Aggregated totals
+  const activeBudgets = budgets.filter((b) => b.is_eligible);
   const totalStarting = budgets.reduce((acc, b) => acc + (parseFloat(b.starting_balance) || 0), 0);
-  const totalAvailable = budgets.reduce((acc, b) => acc + (parseFloat(b.verified_current_balance) || 0), 0);
+  const totalAvailable = activeBudgets.reduce((acc, b) => acc + (parseFloat(b.verified_current_balance) || 0), 0);
   const totalUsed = budgets.reduce((acc, b) => acc + (parseFloat(b.credit_usage) || 0), 0);
   const totalCeiling = budgets.reduce((acc, b) => acc + (parseFloat(b.planned_ceiling_limit) || 0), 0);
-  const totalHeadroom = budgets.reduce((acc, b) => acc + (parseFloat(b.remaining_eligible_budget) || 0), 0);
+  const totalHeadroom = activeBudgets.reduce((acc, b) => acc + (parseFloat(b.remaining_eligible_budget) || 0), 0);
   const totalApiUsage = budgets.reduce((acc, b) => acc + (parseFloat(b.universal_api_usage) || 0), 0);
   const totalBuildUsage = budgets.reduce((acc, b) => acc + (parseFloat(b.platform_build_usage) || 0), 0);
 

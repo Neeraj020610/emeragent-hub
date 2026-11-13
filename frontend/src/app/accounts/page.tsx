@@ -885,7 +885,8 @@ function AccountsContent() {
                       {renderConnectionBadge(acc)}
                     </td>
                     <td className="px-4 py-3 font-mono font-semibold text-slate-900">
-                      {acc.latest_credit_balance !== null && acc.latest_credit_balance !== undefined && Number(acc.latest_credit_balance) > 0 ? (
+                      {((acc.connection_status as string) === "CONNECTED" || (acc.connection_status as string) === "STANDBY" || (acc.connection_status as string) === "ACTIVE") &&
+                      acc.latest_credit_balance !== null && acc.latest_credit_balance !== undefined && Number(acc.latest_credit_balance) > 0 ? (
                         <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-xs font-mono font-bold">
                           {Number(acc.latest_credit_balance).toLocaleString()} Credits
                         </span>

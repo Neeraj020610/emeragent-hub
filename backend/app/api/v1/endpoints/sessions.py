@@ -381,6 +381,19 @@ async def sync_account_credits(
     Queries active Emergent session to scrape real-time credit balance and saves a CreditSnapshot.
     """
     from app.services.session.login_automation import scrape_credits_from_active_session
+    from app.models.account import EmergentAccount
+    from app.models.session import AccountSession
+
+    acc = db.query(EmergentAccount).filter(EmergentAccount.id == account_id).first()
+    sess = db.query(AccountSession).filter(AccountSession.account_id == account_id).first()
+    # Fast bailout if account is known disconnected or has no active session
+    if not acc or (acc.connection_status == "DISCONNECTED" and (not sess or sess.session_status != "ACTIVE")):
+        return {
+            "status": "DISCONNECTED",
+            "account_id": account_id,
+            "available_credits": None,
+            "message": "Account is Disconnected / Login Required. Please Sign In first.",
+        }
 
     balance = await scrape_credits_from_active_session(account_id)
     if balance is None:

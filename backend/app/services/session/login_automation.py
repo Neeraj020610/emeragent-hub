@@ -197,33 +197,45 @@ async def _scrape_and_record_credits(page: Page, account_id: int):
                     current_start = Decimal(str(budget.starting_balance or 0))
                     current_usage = Decimal(str(budget.credit_usage or 0))
                     if current_start <= Decimal("0"):
-                        budget.starting_balance = found_credits
-                    elif current_start - found_credits > current_usage:
-                        extra_burn = (current_start - found_credits) - current_usage
-                        budget.credit_usage = current_usage + extra_burn
-                        budget.platform_build_usage = Decimal(str(budget.platform_build_usage or 0)) + extra_burn
+                        # Initialize starting pool (default 50 or found_credits if higher)
+                        budget.starting_balance = Decimal("50.0000") if found_credits <= Decimal("50.0") else found_credits
+                        current_start = budget.starting_balance
+                        current_usage = max(Decimal("0.0000"), current_start - found_credits)
+                        budget.credit_usage = current_usage
+                        budget.platform_build_usage = current_usage
+                    elif current_start >= found_credits:
+                        # Consumed = Starting - Current Available
+                        computed_usage = current_start - found_credits
+                        if computed_usage > current_usage:
+                            extra_burn = computed_usage - current_usage
+                            budget.credit_usage = computed_usage
+                            budget.platform_build_usage = Decimal(str(budget.platform_build_usage or 0)) + extra_burn
                     elif found_credits + current_usage > current_start:
                         # Top-up detected on provider
                         budget.starting_balance = found_credits + current_usage
 
                     budget.verified_current_balance = found_credits
+                    budget.ceiling_percentage = Decimal("100.00")
                     budget.balance_source = "REAL_PROVIDER"
                     budget.last_balance_validated_at = datetime.now(timezone.utc)
-                    budget.is_eligible = True
-                    budget.ineligibility_reason = None
+                    budget.is_eligible = (found_credits > Decimal("0"))
+                    budget.ineligibility_reason = None if found_credits > Decimal("0") else "Credits Exhausted (0 Cr)"
                 else:
+                    initial_start = Decimal("50.0000") if found_credits <= Decimal("50.0") else found_credits
+                    initial_usage = max(Decimal("0.0000"), initial_start - found_credits)
                     budget = AccountCreditBudget(
                         account_id=account_id,
-                        starting_balance=found_credits,
+                        starting_balance=initial_start,
                         verified_current_balance=found_credits,
-                        credit_usage=Decimal("0.0000"),
+                        credit_usage=initial_usage,
                         reserved_credits=Decimal("0.0000"),
-                        ceiling_percentage=Decimal("50.00"),
+                        ceiling_percentage=Decimal("100.00"),
                         balance_source="REAL_PROVIDER",
                         last_balance_validated_at=datetime.now(timezone.utc),
-                        is_eligible=True,
+                        is_eligible=(found_credits > Decimal("0")),
+                        ineligibility_reason=None if found_credits > Decimal("0") else "Credits Exhausted (0 Cr)",
                         universal_api_usage=Decimal("0.0000"),
-                        platform_build_usage=Decimal("0.0000"),
+                        platform_build_usage=initial_usage,
                     )
                     db.add(budget)
 

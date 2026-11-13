@@ -188,6 +188,7 @@ async def _save_task_screenshot(page: Page, task_identifier: str) -> str:
 async def _scrape_credits_number(page: Page) -> Optional[float]:
     try:
         for sel in [
+            "[data-testid='nudges-sidebar-credit-chip']",
             "button[data-testid='nudges-sidebar-credit-chip']",
             "button[data-testid='menubar-topup-discount-button']",
             "button:has-text('Credits')",
@@ -200,6 +201,26 @@ async def _scrape_credits_number(page: Page) -> Optional[float]:
                 m = re.search(r"(\d+(?:\.\d+)?)\s*(?:credits)?", txt, re.I)
                 if m:
                     return float(m.group(1))
+
+        # Check avatar menu popup if chip not directly visible
+        try:
+            avatar_btn = page.locator("[data-testid='menubar-avatar-button'], [data-testid='shell-v2-avatar-menu-trigger']").first
+            if await avatar_btn.is_visible(timeout=1000):
+                await avatar_btn.click(timeout=1500)
+                await asyncio.sleep(0.5)
+                menu_texts = await page.eval_on_selector_all(
+                    "[role='dialog'] *, [role='menu'] *, [data-radix-popper-content-wrapper] *",
+                    "els => els.map(e => e.innerText ? e.innerText.trim() : '')"
+                )
+                full_text = "\n".join(menu_texts)
+                m = re.search(r'Credits\s*[\n:]\s*(\d+(?:\.\d+)?)', full_text, re.IGNORECASE)
+                if m:
+                    await page.keyboard.press("Escape")
+                    return float(m.group(1))
+                await page.keyboard.press("Escape")
+        except Exception:
+            pass
+
         body_txt = await page.evaluate("document.body.innerText")
         m = re.search(r"(\d+\.\d+|\d+)\s+credits\b", body_txt, re.I)
         if m:
@@ -614,6 +635,13 @@ async def _execute_emergent_browser_workflow(
 
                 if poll_idx % 6 == 0:
                     _update_task_fields(task_id)
+
+            # Force reload/refresh to ensure Emergent counter is updated in DOM
+            try:
+                await page.reload(wait_until="domcontentloaded", timeout=15000)
+                await asyncio.sleep(1.5)
+            except Exception:
+                pass
 
             end_credits = await _scrape_credits_number(page)
             await _scrape_and_record_credits(page, account_id)
