@@ -66,7 +66,7 @@ class AccountCreditScheduler:
                 verified_current_balance=available,
                 credit_usage=Decimal("0.0000"),
                 reserved_credits=Decimal("0.0000"),
-                ceiling_percentage=Decimal("50.00"),
+                ceiling_percentage=Decimal("100.00"),
                 balance_source=source,
                 last_balance_validated_at=latest_snap.recorded_at if latest_snap else utcnow(),
                 is_eligible=False,

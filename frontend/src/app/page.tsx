@@ -94,7 +94,7 @@ export default function DashboardPage() {
               </span>
             </div>
             <div className="text-xs text-slate-500 mt-0.5">
-              Verified multi-account orchestration, persistent session health, OTP automation, and 50% credit budget guard.
+              Verified multi-account orchestration, persistent session health, OTP automation, and 100% full pool hot-swapping.
             </div>
           </div>
         </div>
@@ -231,8 +231,8 @@ export default function DashboardPage() {
             </div>
 
             <div className="p-3.5 rounded-lg border border-slate-100 bg-slate-50/60">
-              <div className="text-[10px] uppercase font-bold text-slate-400">50% Credit Guard</div>
-              <div className="text-xl font-bold text-emerald-600 mt-1">Enforced</div>
+              <div className="text-[10px] uppercase font-bold text-slate-400">100% Full Pool</div>
+              <div className="text-xl font-bold text-emerald-600 mt-1">Active</div>
               <div className="text-[11px] text-emerald-700 mt-0.5">Cutoff on ceiling</div>
             </div>
           </div>

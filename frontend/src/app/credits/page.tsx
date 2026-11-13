@@ -72,7 +72,7 @@ export default function CreditsPage() {
   // Ceiling Percentage Modal
   const [isCeilingModalOpen, setIsCeilingModalOpen] = useState(false);
   const [ceilingAccount, setCeilingAccount] = useState<AccountCreditDetail | null>(null);
-  const [newCeilingPct, setNewCeilingPct] = useState("50.00");
+  const [newCeilingPct, setNewCeilingPct] = useState("100.00");
 
   // CSV Import Modal
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
@@ -293,10 +293,10 @@ export default function CreditsPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
             <Coins className="w-6 h-6 text-amber-500" />
-            Credit Analytics & 50% Budget Guard
+            Credit Analytics & 100% Full Pool Telemetry
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Real-time Emergent balance telemetry, automated 50% ceiling headroom, and multi-account consumption tracking.
+            Real-time Emergent balance telemetry, 100% full balance utilization, and automated hot-swap consumption tracking.
           </p>
         </div>
 
@@ -354,15 +354,15 @@ export default function CreditsPage() {
         </div>
 
         <div className="bg-white border border-slate-200 p-4 rounded-xl shadow-xs">
-          <div className="text-xs uppercase text-slate-400 font-bold tracking-wider">Ceiling Limit (50%)</div>
+          <div className="text-xs uppercase text-slate-400 font-bold tracking-wider">Total Usable Pool (100%)</div>
           <div className="text-2xl font-bold text-blue-600 mt-1">{totalCeiling.toFixed(2)} Cr</div>
-          <div className="text-[11px] text-slate-500 mt-0.5">Max allowable quota</div>
+          <div className="text-[11px] text-slate-500 mt-0.5">100% full utilization ceiling</div>
         </div>
 
         <div className="bg-white border border-slate-200 p-4 rounded-xl shadow-xs">
-          <div className="text-xs uppercase text-slate-400 font-bold tracking-wider">Remaining Headroom</div>
+          <div className="text-xs uppercase text-slate-400 font-bold tracking-wider">Remaining Balance</div>
           <div className="text-2xl font-bold text-emerald-600 mt-1">{totalHeadroom.toFixed(2)} Cr</div>
-          <div className="text-[11px] text-emerald-700 font-semibold mt-0.5">Eligible before rotation</div>
+          <div className="text-[11px] text-emerald-700 font-semibold mt-0.5">100% usable before auto-swap</div>
         </div>
       </div>
 
@@ -384,8 +384,8 @@ export default function CreditsPage() {
                 <th className="px-4 py-3">Starting Pool</th>
                 <th className="px-4 py-3">Verified Current</th>
                 <th className="px-4 py-3">Consumed</th>
-                <th className="px-4 py-3">Ceiling ({budgets[0]?.ceiling_percentage || 50}%)</th>
-                <th className="px-4 py-3">Eligible Headroom</th>
+                <th className="px-4 py-3">Pool Limit ({budgets[0]?.ceiling_percentage || 100}%)</th>
+                <th className="px-4 py-3">Usable Balance</th>
                 <th className="px-4 py-3">Source Provenance</th>
                 <th className="px-4 py-3">Worker Eligibility</th>
                 <th className="px-4 py-3 text-right">Actions</th>
@@ -667,12 +667,12 @@ export default function CreditsPage() {
 
             <p className="text-xs text-slate-500">
               Configure maximum quota allowance for{" "}
-              <strong className="text-slate-900">{ceilingAccount.account_name}</strong>. Default is 50.00%.
+              <strong className="text-slate-900">{ceilingAccount.account_name}</strong>. Full utilization is 100.00%.
             </p>
 
             <form onSubmit={handleCeilingSubmit} className="space-y-3 text-xs">
               <div>
-                <label className="font-semibold text-slate-700">Ceiling Percentage (%)</label>
+                <label className="font-semibold text-slate-700">Utilization Percentage (%)</label>
                 <input
                   type="number"
                   step="1"
@@ -689,7 +689,7 @@ export default function CreditsPage() {
                 <div>Starting Pool: {parseFloat(ceilingAccount.starting_balance).toFixed(2)} Cr</div>
                 <div className="font-semibold text-blue-700">
                   New Allowable Budget:{" "}
-                  {((parseFloat(ceilingAccount.starting_balance) * (parseFloat(newCeilingPct) || 50)) / 100).toFixed(2)}{" "}
+                  {((parseFloat(ceilingAccount.starting_balance) * (parseFloat(newCeilingPct) || 100)) / 100).toFixed(2)}{" "}
                   Cr
                 </div>
               </div>
