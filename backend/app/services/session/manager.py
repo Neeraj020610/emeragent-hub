@@ -101,20 +101,27 @@ class MultiAccountSessionManager:
 
     def find_dedicated_browser(self) -> Optional[str]:
         """
-        Locates the dedicated isolated Chromium executable installed for Playwright.
-        Using this dedicated binary ensures:
-        1. User's personal Chrome profiles and open browser sessions are NEVER touched or shared.
-        2. Clean, isolated browser sandboxes per Emergent account.
-        3. Reliable multi-account login persistence.
+        Locates the dedicated isolated Chromium executable installed for Playwright (Windows & Linux).
         """
+        import shutil
+        import glob
+
+        # Linux Playwright cache paths
+        home_dir = os.path.expanduser("~")
+        linux_playwright_dirs = [
+            os.path.join(home_dir, ".cache", "ms-playwright"),
+            "/root/.cache/ms-playwright",
+            "/var/cache/ms-playwright",
+        ]
+        for pdir in linux_playwright_dirs:
+            if os.path.exists(pdir):
+                matches = glob.glob(os.path.join(pdir, "chromium-*", "chrome-linux*", "chrome"))
+                if matches:
+                    return sorted(matches, reverse=True)[0]
+
+        # Windows Playwright cache paths
         local_app_data = os.environ.get("LOCALAPPDATA", r"C:\Users\Admin\AppData\Local")
         playwright_dir = os.path.join(local_app_data, "ms-playwright")
-        candidates = [
-            os.path.join(playwright_dir, "chromium-1248", "chrome-win64", "chrome.exe"),
-            os.path.join(playwright_dir, "chromium-1234", "chrome-win64", "chrome.exe"),
-            r"C:\Users\Admin\AppData\Local\ms-playwright\chromium-1248\chrome-win64\chrome.exe",
-            r"C:\Users\Admin\AppData\Local\ms-playwright\chromium-1234\chrome-win64\chrome.exe",
-        ]
         if os.path.exists(playwright_dir):
             try:
                 for item in sorted(os.listdir(playwright_dir), reverse=True):
@@ -124,7 +131,24 @@ class MultiAccountSessionManager:
                             return exe_candidate
             except Exception:
                 pass
-        for p in candidates:
+
+        # Check standard Linux/Unix system binaries
+        for bin_name in ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium", "chrome"]:
+            p = shutil.which(bin_name)
+            if p and os.path.exists(p):
+                return p
+            for fixed_path in [f"/usr/bin/{bin_name}", f"/usr/local/bin/{bin_name}", f"/snap/bin/{bin_name}"]:
+                if os.path.exists(fixed_path):
+                    return fixed_path
+
+        # Windows fallback paths
+        win_candidates = [
+            os.path.join(playwright_dir, "chromium-1248", "chrome-win64", "chrome.exe"),
+            os.path.join(playwright_dir, "chromium-1234", "chrome-win64", "chrome.exe"),
+            r"C:\Users\Admin\AppData\Local\ms-playwright\chromium-1248\chrome-win64\chrome.exe",
+            r"C:\Users\Admin\AppData\Local\ms-playwright\chromium-1234\chrome-win64\chrome.exe",
+        ]
+        for p in win_candidates:
             if os.path.exists(p):
                 return p
         return None
@@ -133,13 +157,18 @@ class MultiAccountSessionManager:
         dedicated = self.find_dedicated_browser()
         if dedicated:
             return dedicated
-        candidates = [
+        import shutil
+        for bin_name in ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium", "chrome"]:
+            p = shutil.which(bin_name)
+            if p and os.path.exists(p):
+                return p
+        win_candidates = [
             r"C:\Program Files\Google\Chrome\Application\chrome.exe",
             r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
             r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
             r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
         ]
-        for path in candidates:
+        for path in win_candidates:
             if os.path.exists(path):
                 return path
         return None

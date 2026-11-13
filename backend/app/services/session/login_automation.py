@@ -499,6 +499,14 @@ async def execute_automated_login(
         cdp_ready = False
         p = await async_playwright().start()
 
+        is_linux = os.name != "nt"
+        has_display = bool(os.environ.get("DISPLAY"))
+        extra_flags = []
+        if is_linux:
+            extra_flags.extend(["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"])
+            if not has_display:
+                extra_flags.append("--headless=new")
+
         if os.name == "nt":
             import ctypes
             args = f'--remote-debugging-port={cdp_port} --user-data-dir="{profile_dir}" --no-first-run --no-default-browser-check --disable-blink-features=AutomationControlled https://app.emergent.sh'
@@ -518,18 +526,46 @@ async def execute_automated_login(
                     browser = await p.chromium.connect_over_cdp(cdp_url)
                     context = browser.contexts[0]
                     page = context.pages[0] if context.pages else await context.new_page()
+        elif is_linux:
+            import subprocess
+            cmd = [
+                browser_exe,
+                f"--user-data-dir={profile_dir}",
+                f"--remote-debugging-port={cdp_port}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-blink-features=AutomationControlled",
+            ] + extra_flags + ["https://app.emergent.sh"]
+            try:
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                cdp_url = f"http://127.0.0.1:{cdp_port}"
+                for _ in range(16):
+                    await asyncio.sleep(0.5)
+                    try:
+                        r = requests.get(f"{cdp_url}/json/version", timeout=1)
+                        if r.status_code == 200:
+                            cdp_ready = True
+                            break
+                    except Exception:
+                        pass
+                if cdp_ready:
+                    browser = await p.chromium.connect_over_cdp(cdp_url)
+                    context = browser.contexts[0]
+                    page = context.pages[0] if context.pages else await context.new_page()
+            except Exception:
+                pass
 
         if not cdp_ready:
             context = await p.chromium.launch_persistent_context(
                 user_data_dir=profile_dir,
                 executable_path=browser_exe,
-                headless=False,
+                headless=(not has_display if is_linux else False),
                 args=[
                     "--no-first-run",
                     "--no-default-browser-check",
                     "--disable-blink-features=AutomationControlled",
-                ],
-                viewport=None,
+                ] + extra_flags,
+                viewport={"width": 1280, "height": 720} if (is_linux and not has_display) else None,
             )
             page = context.pages[0] if context.pages else await context.new_page()
 

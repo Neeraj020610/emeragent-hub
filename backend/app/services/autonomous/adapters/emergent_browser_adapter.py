@@ -244,19 +244,26 @@ async def _acquire_account_page(
     profile_dir = manager._get_browser_profile_dir(account_id)
     cleanup_stale_profile_locks(profile_dir)
 
+    is_linux = os.name != "nt"
+    has_display = bool(os.environ.get("DISPLAY"))
+    extra_flags = []
+    if is_linux:
+        extra_flags.extend(["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"])
+        if not has_display:
+            extra_flags.append("--headless=new")
+
     # Launch detached Chrome with CDP port so the session stays alive across tasks
     try:
+        cmd = [
+            browser_exe,
+            f"--user-data-dir={profile_dir}",
+            f"--remote-debugging-port={cdp_port}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-blink-features=AutomationControlled",
+        ] + extra_flags + ["https://app.emergent.sh/home"]
         subprocess.Popen(
-            [
-                browser_exe,
-                f"--user-data-dir={profile_dir}",
-                f"--remote-debugging-port={cdp_port}",
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--disable-blink-features=AutomationControlled",
-                "--start-maximized",
-                "https://app.emergent.sh/home",
-            ],
+            cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -274,9 +281,13 @@ async def _acquire_account_page(
     context = await playwright.chromium.launch_persistent_context(
         user_data_dir=profile_dir,
         executable_path=browser_exe,
-        headless=False,
-        args=["--no-first-run", "--no-default-browser-check", "--disable-blink-features=AutomationControlled"],
-        viewport=None,
+        headless=(not has_display if is_linux else False),
+        args=[
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-blink-features=AutomationControlled",
+        ] + extra_flags,
+        viewport={"width": 1280, "height": 720} if (is_linux and not has_display) else None,
     )
     open_pages = [pg for pg in context.pages if not pg.is_closed()]
     page = open_pages[0] if open_pages else await context.new_page()
@@ -487,8 +498,11 @@ async def _execute_emergent_browser_workflow(
             submit_btn = page.locator(
                 "button[data-testid='main-task-submit'], button[data-testid='home-v2-composer-send'], button[aria-label='Send']"
             ).first
-            await submit_btn.wait_for(state="visible", timeout=8000)
-            await submit_btn.click(timeout=5000)
+            try:
+                await submit_btn.wait_for(state="visible", timeout=8000)
+                await submit_btn.click(timeout=5000)
+            except Exception:
+                await composer.press("Enter")
 
             _append_task_log(task_id, "Submitted prompt to live Emergent Studio composer.", step="EMERGENT_PROMPT_SUBMITTED")
             checkpoints.append({"step": "EMERGENT_PROMPT_SUBMITTED", "completed_at": utcnow().isoformat()})
