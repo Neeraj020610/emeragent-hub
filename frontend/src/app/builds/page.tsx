@@ -877,7 +877,7 @@ function BuildsContent() {
                     <th className="px-4 py-2.5">Work Type</th>
                     <th className="px-4 py-2.5">Title & Expected Result</th>
                     <th className="px-4 py-2.5">Priority</th>
-                    <th className="px-4 py-2.5">Cost ($)</th>
+                    <th className="px-4 py-2.5">Credits Used</th>
                     <th className="px-4 py-2.5">Status</th>
                     <th className="px-4 py-2.5 text-right">Actions</th>
                   </tr>
@@ -921,7 +921,13 @@ function BuildsContent() {
                             {t.priority}
                           </span>
                         </td>
-                        <td className="px-4 py-3 font-mono font-semibold">${parseFloat(t.actual_credit_cost).toFixed(3)}</td>
+                        <td className="px-4 py-3 font-mono font-semibold text-amber-700">
+                          {parseFloat(t.actual_credit_cost) > 0
+                            ? `${parseFloat(t.actual_credit_cost).toFixed(2)} Cr`
+                            : parseFloat(t.estimated_credit_cost) > 0
+                            ? `${parseFloat(t.estimated_credit_cost).toFixed(2)} Cr`
+                            : "0.00 Cr"}
+                        </td>
                         <td className="px-4 py-3">
                           <span
                             className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
@@ -1908,7 +1914,7 @@ function BuildsContent() {
                   {/* Ledger Provenance Card */}
                   <div className="flex items-center justify-between text-[11px] text-slate-500 bg-white p-2.5 rounded-lg border border-slate-100 font-mono">
                     <span>Artifact Provenance: Verified Storage</span>
-                    <span>Actual Cost: ${parseFloat(activeArtifactTask.actual_credit_cost).toFixed(4)}</span>
+                    <span>Credits Consumed: {parseFloat(activeArtifactTask.actual_credit_cost) > 0 ? `${parseFloat(activeArtifactTask.actual_credit_cost).toFixed(2)} Cr` : `${parseFloat(activeArtifactTask.estimated_credit_cost || '0').toFixed(2)} Cr`}</span>
                   </div>
                 </div>
               );

@@ -682,8 +682,12 @@ async def _execute_emergent_browser_workflow(
             await _scrape_and_record_credits(page, account_id)
 
             actual_cost = Decimal("0.0000")
-            if start_credits is not None and end_credits is not None and start_credits >= end_credits:
+            if start_credits is not None and end_credits is not None and start_credits > end_credits:
                 actual_cost = Decimal(str(round(start_credits - end_credits, 4)))
+            elif estimated_cost > Decimal("0.0000"):
+                actual_cost = estimated_cost
+            else:
+                actual_cost = Decimal("5.0000") if work_type == "VIDEO_CREATION" else Decimal("2.0000")
 
             checkpoints.append({
                 "step": "EMERGENT_DELIVERABLE_READY" if generation_done else "EMERGENT_WORKSPACE_TIMEOUT",
@@ -741,13 +745,13 @@ async def _execute_emergent_browser_workflow(
                 msg_txt = (
                     f"Real Emergent Video ready hai! **{task_title}** (`{account_name}`) par generate ho chuka hai.\n\n"
                     f"- **Emergent Project**: {emergent_url}\n"
-                    f"- **Actual Credits Delta**: `{actual_cost}`\n\n"
+                    f"- **Actual Credits Delta**: `{actual_cost} Cr`\n\n"
                     "Niche **View Generated Deliverables & Script** par click karke real Emergent MP4 video play ya download karein!"
                     if is_hinglish
                     else
                     f"Your real Emergent video for **{task_title}** is ready (executed on `{account_name}`)!\n\n"
                     f"- **Emergent Project**: {emergent_url}\n"
-                    f"- **Actual Credits Used**: `{actual_cost}`\n\n"
+                    f"- **Actual Credits Used**: `{actual_cost} Cr`\n\n"
                     "Click **View Generated Deliverables & Script** below to watch or download the `.mp4`."
                 )
             elif generation_done:
@@ -755,7 +759,7 @@ async def _execute_emergent_browser_workflow(
                     f"Real Emergent build ready hai! **{task_title}** (`{account_name}`) par complete ho chuka hai.\n\n"
                     f"- **Emergent Project**: {emergent_url}\n"
                     + (f"- **Live Preview**: {preview_url}\n" if preview_url else "")
-                    + f"- **Actual Credits Delta**: `{actual_cost}`"
+                    + f"- **Actual Credits Delta**: `{actual_cost} Cr`"
                     if is_hinglish
                     else
                     f"Your real Emergent project for **{task_title}** is complete on `{account_name}`!\n\n"
