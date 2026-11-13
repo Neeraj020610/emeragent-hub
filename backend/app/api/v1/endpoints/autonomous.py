@@ -253,7 +253,7 @@ def get_task_logs(
     return logs
 
 
-@router.get("/tasks/{task_id}/video")
+@router.api_route("/tasks/{task_id}/video", methods=["GET", "HEAD"])
 def get_task_video(
     task_id: int,
     db: Session = Depends(get_db),
@@ -292,7 +292,7 @@ def get_task_video(
     )
 
 
-@router.get("/tasks/{task_id}/preview-image")
+@router.api_route("/tasks/{task_id}/preview-image", methods=["GET", "HEAD"])
 def get_task_preview_image(
     task_id: int,
     db: Session = Depends(get_db),
@@ -311,7 +311,7 @@ def get_task_preview_image(
     )
 
 
-@router.get("/tasks/{task_id}/webapp")
+@router.api_route("/tasks/{task_id}/webapp", methods=["GET", "HEAD"])
 def get_task_webapp(
     task_id: int,
     download: bool = Query(False),
