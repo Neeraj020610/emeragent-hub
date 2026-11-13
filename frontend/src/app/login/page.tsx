@@ -7,8 +7,8 @@ import { Layers, ShieldCheck, Lock, Mail, ArrowRight, AlertCircle, Shield, UserC
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("admin@emergent-hub.com");
-  const [password, setPassword] = useState("EmergentAdmin2026!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -44,28 +44,7 @@ export default function LoginPage() {
       setSession(data);
       router.push("/");
     } catch (err: any) {
-      // In offline/standalone fallback mode, verify preset credentials
-      if (email === "admin@emergent-hub.com" && password === "EmergentAdmin2026!") {
-        setSession({
-          access_token: "offline_demo_admin_jwt",
-          role: "ADMIN",
-          email: "admin@emergent-hub.com",
-          full_name: "Hub System Administrator",
-          user_id: 1,
-        });
-        router.push("/");
-      } else if (email === "executive@emergent-hub.com" && password === "Executive2026!") {
-        setSession({
-          access_token: "offline_demo_exec_jwt",
-          role: "EXECUTIVE",
-          email: "executive@emergent-hub.com",
-          full_name: "Fleet Operations Executive",
-          user_id: 2,
-        });
-        router.push("/");
-      } else {
-        setError(err.message || "Invalid email or password.");
-      }
+      setError(err.message || "Invalid email or password.");
     } finally {
       setIsLoading(false);
     }
@@ -170,20 +149,23 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-600">
-            {isCurrentAdmin ? (
-              <div>👑 <strong>Admin Mode:</strong> Has video generation access, task planning, and account deletion permissions.</div>
-            ) : (
-              <div>👤 <strong>Executive Mode:</strong> Restricted to registering new Emergent accounts and OTP verification. Video generation is blocked.</div>
-            )}
-          </div>
+          {isCurrentAdmin && (
+            <div className="p-2.5 bg-purple-50 border border-purple-200 rounded-lg text-[11px] text-purple-900">
+              👑 <strong>Admin Mode:</strong> Full platform control, video/task execution, and user management.
+            </div>
+          )}
+          {isCurrentExec && (
+            <div className="p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-[11px] text-blue-900">
+              👤 <strong>Executive Mode:</strong> Registering new Emergent accounts and OTP verification. Video generation is blocked.
+            </div>
+          )}
 
           <button
             type="submit"
             disabled={isLoading}
             className="w-full py-2.5 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm shadow-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-50 cursor-pointer"
           >
-            <span>{isLoading ? "Authenticating..." : `Sign in as ${isCurrentAdmin ? "Admin" : "Executive"}`}</span>
+            <span>{isLoading ? "Authenticating..." : "Sign in to Hub"}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>

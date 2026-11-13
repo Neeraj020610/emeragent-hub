@@ -13,20 +13,13 @@ export interface StoredSession {
 export function getSession(): StoredSession | null {
   if (typeof window === "undefined") return null;
   const token = localStorage.getItem("ech_token");
-  const role = localStorage.getItem("ech_role") || "ADMIN";
-  const email = localStorage.getItem("ech_email") || "admin@emergent-hub.com";
-  const fullName = localStorage.getItem("ech_fullname") || "Hub Administrator";
-  const userId = Number(localStorage.getItem("ech_userid") || "1");
-
   if (!token) {
-    return {
-      token: "demo_token_authenticated",
-      role,
-      email,
-      fullName,
-      userId,
-    };
+    return null;
   }
+  const role = localStorage.getItem("ech_role") || "MEMBER";
+  const email = localStorage.getItem("ech_email") || "";
+  const fullName = localStorage.getItem("ech_fullname") || "User";
+  const userId = Number(localStorage.getItem("ech_userid") || "0");
 
   return { token, role, email, fullName, userId };
 }
@@ -68,6 +61,12 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): 
     });
 
     if (!res.ok) {
+      if (res.status === 401) {
+        clearSession();
+        if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+          window.location.href = "/login";
+        }
+      }
       const errBody = await res.json().catch(() => ({}));
       throw new Error(errBody.detail || `Request failed with status ${res.status}`);
     }

@@ -1,9 +1,10 @@
 "use client";
 
 import React, { ReactNode, useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, getSession } from "@/lib/api";
 import { AlertCircle, ExternalLink, RefreshCw, X, ShieldAlert } from "lucide-react";
 
 interface AppShellProps {
@@ -41,9 +42,20 @@ function markReauthDismissed(expiryKey?: string) {
 }
 
 export function AppShell({ children, noPadding = false }: AppShellProps) {
+  const router = useRouter();
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [expiredSession, setExpiredSession] = useState<ExpiredSessionNotice | null>(null);
   const [reauthing, setReauthing] = useState(false);
+
+  useEffect(() => {
+    const session = getSession();
+    if (!session || !session.token) {
+      router.push("/login");
+    } else {
+      setIsAuthenticated(true);
+    }
+  }, [router]);
 
   const dismissNotice = () => {
     if (expiredSession?.expiryKey) {
@@ -132,6 +144,15 @@ export function AppShell({ children, noPadding = false }: AppShellProps) {
       setReauthing(false);
     }
   };
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-[#080E21] flex flex-col items-center justify-center text-slate-300 gap-3">
+        <div className="w-8 h-8 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+        <span className="text-xs font-medium text-slate-400">Verifying session...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-row">

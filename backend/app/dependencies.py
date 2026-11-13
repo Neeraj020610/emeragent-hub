@@ -22,16 +22,6 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Support session tokens from client
-    if credentials.credentials == "demo_token_authenticated":
-        admin_user = db.query(User).filter(User.email == "admin@emergent-hub.com").first()
-        if admin_user:
-            return admin_user
-    elif credentials.credentials == "demo_token_executive":
-        exec_user = db.query(User).filter(User.email == "executive@emergent-hub.com").first()
-        if exec_user:
-            return exec_user
-
     payload = decode_access_token(credentials.credentials)
     if not payload or "sub" not in payload:
         raise HTTPException(
