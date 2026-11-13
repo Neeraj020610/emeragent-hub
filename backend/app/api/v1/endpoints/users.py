@@ -113,3 +113,37 @@ def update_user(
     )
 
     return user
+
+
+@router.delete("/{user_id}", status_code=status.HTTP_200_OK)
+def delete_user(
+    user_id: int,
+    request: Request,
+    current_user: User = Depends(require_role(["ADMIN"])),
+    db: Session = Depends(get_db),
+):
+    if current_user.id == user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own admin account.",
+        )
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+
+    deleted_email = user.email
+    db.delete(user)
+    db.commit()
+
+    record_audit(
+        db=db,
+        action="user_deleted",
+        resource_type="user",
+        resource_id=str(user_id),
+        user_id=current_user.id,
+        ip_address=request.client.host if request.client else None,
+        details=f"Admin deleted user {deleted_email} (ID: {user_id})",
+    )
+
+    return {"status": "SUCCESS", "message": f"User {deleted_email} deleted successfully."}

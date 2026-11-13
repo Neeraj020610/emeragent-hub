@@ -13,6 +13,7 @@ import {
   LogOut,
   X,
   User as UserIcon,
+  Users,
 } from "lucide-react";
 import { clearSession, getSession } from "@/lib/api";
 
@@ -41,7 +42,28 @@ interface SidebarProps {
 export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const session = getSession();
+  const [session, setSessionState] = React.useState<any>(null);
+
+  React.useEffect(() => {
+    setSessionState(getSession());
+  }, []);
+
+  const isAdmin = session?.role === "ADMIN";
+
+  const navItemsToRender: NavItem[] = [
+    ...navItems,
+    ...(isAdmin
+      ? [
+          {
+            name: "Users & Team",
+            href: "/team",
+            icon: Users,
+            badge: "ADMIN",
+            badgeColor: "bg-purple-900/40 text-purple-300 border-purple-700/50",
+          },
+        ]
+      : []),
+  ];
 
   const handleLogout = () => {
     clearSession();
@@ -83,7 +105,7 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
             Main Navigation
           </div>
           <nav className="space-y-1.5">
-            {navItems.map((item) => {
+            {navItemsToRender.map((item) => {
               const isActive =
                 pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
               const Icon = item.icon;
