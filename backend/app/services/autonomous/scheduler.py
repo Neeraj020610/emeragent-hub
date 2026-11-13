@@ -140,9 +140,14 @@ class AccountCreditScheduler:
             return False, budget.ineligibility_reason
 
         session = db.query(AccountSession).filter(AccountSession.account_id == budget.account_id).first()
-        if not session or session.session_status != "ACTIVE":
+        if not session or session.session_status not in ("ACTIVE", "STANDBY"):
             budget.is_eligible = False
             budget.ineligibility_reason = f"Session is {session.session_status if session else 'MISSING'}"
+            return False, budget.ineligibility_reason
+
+        if budget.verified_current_balance is not None and budget.verified_current_balance <= Decimal("0"):
+            budget.is_eligible = False
+            budget.ineligibility_reason = "Credits Exhausted (0 Cr)"
             return False, budget.ineligibility_reason
 
         if budget.active_task_id is not None and budget.active_task_id != current_task_id:

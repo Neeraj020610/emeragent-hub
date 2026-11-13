@@ -24,12 +24,26 @@ def enforce_single_active_account(active_account_id: int):
     db = SessionLocal()
     try:
         now = datetime.now(timezone.utc)
-        # Update other connected accounts to STANDBY
+        # 1. Activate the primary worker
+        act_acc = db.query(EmergentAccount).filter(EmergentAccount.id == active_account_id).first()
+        if act_acc:
+            act_acc.connection_status = "CONNECTED"
+            act_acc.last_connected_at = now
+            act_acc.updated_at = now
+        act_sess = db.query(AccountSession).filter(AccountSession.account_id == active_account_id).first()
+        if act_sess:
+            act_sess.session_status = "ACTIVE"
+            act_sess.reauth_required = False
+            act_sess.reauth_reason = None
+            act_sess.last_active_at = now
+            act_sess.updated_at = now
+
+        # 2. Transition all other connected/active accounts to STANDBY
         other_accounts = (
             db.query(EmergentAccount)
             .filter(
                 EmergentAccount.id != active_account_id,
-                EmergentAccount.connection_status == "CONNECTED",
+                EmergentAccount.connection_status.in_(["CONNECTED", "ACTIVE"]),
             )
             .all()
         )
