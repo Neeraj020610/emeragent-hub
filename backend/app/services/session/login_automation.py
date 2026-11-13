@@ -120,18 +120,55 @@ async def _scrape_and_record_credits(page: Page, account_id: int):
         except Exception:
             pass
 
-        # 2. Check v2 sidebar credit chip first (e.g. "110 credits left")
+        # 1. Primary: Direct Emergent Header Credit Pill (v3/v2 exact decimal balance, e.g. "157.95")
         try:
-            chip = page.locator("[data-testid='nudges-sidebar-credit-chip']").first
-            if await chip.is_visible(timeout=1500):
-                chip_txt = (await chip.inner_text() or "").strip()
-                m_chip = re.search(r'(\d+(?:\.\d+)?)\s*credits?', chip_txt, re.I)
-                if m_chip:
-                    found_credits = Decimal(m_chip.group(1))
-        except Exception:
-            pass
+            pill = page.locator(
+                "span.text-header-credits-text, "
+                "[class*='text-header-credits-text'], "
+                "header [class*='bg-header-credits-bg'], "
+                "[data-testid='global-header-root'] [class*='credits'] span, "
+                "header [class*='credits'] span"
+            ).first
+            if await pill.is_visible(timeout=1500):
+                txt = (await pill.inner_text() or "").strip()
+                m_pill = re.search(r'(\d+(?:\.\d+)?)', txt)
+                if m_pill:
+                    val = float(m_pill.group(1))
+                    if val > 0:
+                        found_credits = Decimal(str(val))
+        except Exception as e:
+            logger.debug(f"Header credit pill note: {e}")
 
-        # 3. Check User Avatar Menu (v1/v2 where Emergent displays exact credits)
+        # 2. Check credit pill dialog (when clicked shows "Standard: 157.95 credits")
+        if found_credits is None:
+            try:
+                pill = page.locator("header [class*='bg-header-credits-bg'], span.text-header-credits-text").first
+                if await pill.is_visible(timeout=800):
+                    await pill.click(timeout=1000)
+                    await asyncio.sleep(0.4)
+                    diag = page.locator("[role='dialog'] *, [data-radix-popper-content-wrapper] *")
+                    texts = await diag.evaluate_all("els => els.map(e => e.innerText || '')")
+                    full_diag = "\n".join(texts)
+                    m = re.search(r'Standard:\s*(\d+(?:\.\d+)?)\s*credits', full_diag, re.I) or re.search(r'(\d+(?:\.\d+)?)\s*credits', full_diag, re.I)
+                    if m:
+                        found_credits = Decimal(m.group(1))
+                    await page.keyboard.press("Escape")
+            except Exception:
+                pass
+
+        # 3. Check v2 sidebar credit chip (e.g. "110 credits left")
+        if found_credits is None:
+            try:
+                chip = page.locator("[data-testid='nudges-sidebar-credit-chip']").first
+                if await chip.is_visible(timeout=1000):
+                    chip_txt = (await chip.inner_text() or "").strip()
+                    m_chip = re.search(r'(\d+(?:\.\d+)?)\s*credits?', chip_txt, re.I)
+                    if m_chip:
+                        found_credits = Decimal(m_chip.group(1))
+            except Exception:
+                pass
+
+        # 4. Check User Avatar Menu (v1/v2 where Emergent displays exact credits)
         if found_credits is None:
             try:
                 avatar_btn = page.locator("[data-testid='menubar-avatar-button'], [data-testid='shell-v2-avatar-menu-trigger']").first

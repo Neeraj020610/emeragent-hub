@@ -187,6 +187,41 @@ async def _save_task_screenshot(page: Page, task_identifier: str) -> str:
 
 async def _scrape_credits_number(page: Page) -> Optional[float]:
     try:
+        # 1. Primary: Direct Emergent Header Credit Pill (v3/v2 exact decimal balance, e.g. "157.95")
+        try:
+            pill = page.locator(
+                "span.text-header-credits-text, "
+                "[class*='text-header-credits-text'], "
+                "header [class*='bg-header-credits-bg'], "
+                "[data-testid='global-header-root'] [class*='credits'] span, "
+                "header [class*='credits'] span"
+            ).first
+            if await pill.is_visible(timeout=1500):
+                txt = (await pill.inner_text() or "").strip()
+                m_pill = re.search(r'(\d+(?:\.\d+)?)', txt)
+                if m_pill:
+                    val = float(m_pill.group(1))
+                    if val > 0:
+                        return val
+        except Exception:
+            pass
+
+        # 2. Check credit pill dialog (shows "Standard: 157.95 credits")
+        try:
+            pill = page.locator("header [class*='bg-header-credits-bg'], span.text-header-credits-text").first
+            if await pill.is_visible(timeout=800):
+                await pill.click(timeout=1000)
+                await asyncio.sleep(0.4)
+                diag = page.locator("[role='dialog'] *, [data-radix-popper-content-wrapper] *")
+                texts = await diag.evaluate_all("els => els.map(e => e.innerText || '')")
+                full_diag = "\n".join(texts)
+                m = re.search(r'Standard:\s*(\d+(?:\.\d+)?)\s*credits', full_diag, re.I) or re.search(r'(\d+(?:\.\d+)?)\s*credits', full_diag, re.I)
+                await page.keyboard.press("Escape")
+                if m:
+                    return float(m.group(1))
+        except Exception:
+            pass
+
         for sel in [
             "[data-testid='nudges-sidebar-credit-chip']",
             "button[data-testid='nudges-sidebar-credit-chip']",
