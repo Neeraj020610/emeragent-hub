@@ -11,8 +11,23 @@ from app.database import SessionLocal
 from app.db_init import init_db
 from app.models.autonomous import AutonomousSystemState
 from app.services.autonomous.worker_engine import AutonomousWorkerEngine
+from app.services.storage_lifecycle import cleanup_expired_artifacts
 
 logger = logging.getLogger("autonomous_worker")
+
+async def storage_retention_worker():
+    """Background lifecycle task enforcing 6-hour max retention on video deliverables and screenshots."""
+    while True:
+        try:
+            stats = cleanup_expired_artifacts()
+            if stats.get("freed_bytes", 0) > 0:
+                logger.info(f"Artifact retention cleanup: purged {stats.get('deleted_videos')} videos, {stats.get('deleted_screenshots')} shots, freed {stats.get('freed_bytes')} bytes.")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.debug(f"Storage lifecycle sweep note: {e}")
+        # Run cleanup every 15 minutes
+        await asyncio.sleep(900)
 
 async def autonomous_background_worker():
     """Background polling loop for autonomous tasks and pipeline jobs."""
@@ -87,8 +102,9 @@ async def on_startup():
     finally:
         db.close()
     
-    # Spawn background autonomous worker
+    # Spawn background autonomous worker and 6-hour storage retention worker
     asyncio.create_task(autonomous_background_worker())
+    asyncio.create_task(storage_retention_worker())
 
 
 @app.get("/health", tags=["system"])

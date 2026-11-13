@@ -21,4 +21,19 @@ def get_system_settings(
         "database_backend": "PostgreSQL Ready (Configured SQLite Active for Dev)",
         "credit_tracking_mode": "Manual Entry & CSV Import (Safe Sync Architecture)",
         "token_expiration_minutes": settings.ACCESS_TOKEN_EXPIRE_MINUTES,
+        "artifact_retention_policy": "Strict 6-Hour Auto-Purge (Videos & Screenshots)",
+    }
+
+
+@router.post("/purge-expired-artifacts")
+def purge_expired_artifacts_endpoint(
+    current_user: User = Depends(require_role(["ADMIN"])),
+) -> Dict[str, Any]:
+    """Manually triggers the 6-hour artifact retention purge."""
+    from app.services.storage_lifecycle import cleanup_expired_artifacts
+    stats = cleanup_expired_artifacts()
+    return {
+        "status": "SUCCESS",
+        "message": f"Artifact retention purge completed. Freed {stats['freed_bytes']} bytes.",
+        "stats": stats,
     }
