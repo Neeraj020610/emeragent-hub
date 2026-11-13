@@ -420,6 +420,14 @@ class MultiAccountSessionManager:
         # Update account connection status
         account.connection_status = "CONNECTED"
         account.last_connected_at = now
+
+        # Enforce single active account: all other connected accounts transition to STANDBY
+        other_conns = db.query(EmergentAccount).filter(EmergentAccount.id != account.id, EmergentAccount.connection_status == "CONNECTED").all()
+        for oc in other_conns:
+            oc.connection_status = "STANDBY"
+            oc_sess = db.query(AccountSession).filter(AccountSession.account_id == oc.id).first()
+            if oc_sess and oc_sess.session_status == "ACTIVE":
+                oc_sess.session_status = "STANDBY"
         account.last_synced_at = now
 
         # Set as active session for this user
@@ -896,6 +904,14 @@ class MultiAccountSessionManager:
         account.connection_status = "CONNECTED"
         account.last_connected_at = now
 
+        # Enforce single active account: all other connected accounts transition to STANDBY
+        other_conns = db.query(EmergentAccount).filter(EmergentAccount.id != account.id, EmergentAccount.connection_status == "CONNECTED").all()
+        for oc in other_conns:
+            oc.connection_status = "STANDBY"
+            oc_sess = db.query(AccountSession).filter(AccountSession.account_id == oc.id).first()
+            if oc_sess and oc_sess.session_status == "ACTIVE":
+                oc_sess.session_status = "STANDBY"
+
         audit = AuditLog(
             user_id=current_user.id,
             action="manual_otp_verified",
@@ -946,6 +962,14 @@ class MultiAccountSessionManager:
 
         account.connection_status = "CONNECTED"
         account.last_connected_at = now
+
+        # Enforce single active account: all other connected accounts transition to STANDBY
+        other_conns = db.query(EmergentAccount).filter(EmergentAccount.id != account.id, EmergentAccount.connection_status == "CONNECTED").all()
+        for oc in other_conns:
+            oc.connection_status = "STANDBY"
+            oc_sess = db.query(AccountSession).filter(AccountSession.account_id == oc.id).first()
+            if oc_sess and oc_sess.session_status == "ACTIVE":
+                oc_sess.session_status = "STANDBY"
 
         audit = AuditLog(
             user_id=current_user.id,

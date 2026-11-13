@@ -14,7 +14,7 @@ export interface AccountItem {
   description?: string | null;
   status: "active" | "suspended" | "pending";
   auth_type: "oauth" | "mcp" | "api_key" | "universal_key";
-  connection_status: "CONNECTED" | "DISCONNECTED" | "EXPIRED" | "AUTHORIZATION_REQUIRED" | "ERROR" | "PENDING" | "API_CONNECTED" | "NOT_CONNECTED" | "LOGIN_IN_PROGRESS" | "OTP_REQUIRED" | "AUTHENTICATED" | "LOGIN_FAILED" | "SESSION_EXPIRED";
+  connection_status: "CONNECTED" | "DISCONNECTED" | "EXPIRED" | "AUTHORIZATION_REQUIRED" | "ERROR" | "PENDING" | "API_CONNECTED" | "NOT_CONNECTED" | "LOGIN_IN_PROGRESS" | "OTP_REQUIRED" | "AUTHENTICATED" | "LOGIN_FAILED" | "SESSION_EXPIRED" | "STANDBY" | "EXHAUSTED";
   credit_sync_status: string;
   latest_credit_balance: number;
   last_connected_at?: string | null;

@@ -665,6 +665,15 @@ async def _execute_emergent_browser_workflow(
             finally:
                 db_rec.close()
 
+            # Automatic Failover Check: If active account credits reached 0, auto-switch to next account!
+            if end_credits is not None and end_credits <= 0:
+                try:
+                    from app.services.session.failover_service import auto_failover_exhausted_account
+                    asyncio.create_task(auto_failover_exhausted_account(account_id))
+                    logger.info(f"Account {account_id} credits exhausted (0 Cr). Triggered background auto-failover.")
+                except Exception as ex_fail:
+                    logger.warning(f"Error triggering auto-failover: {ex_fail}")
+
             if downloaded_video_path:
                 msg_txt = (
                     f"Real Emergent Video ready hai! **{task_title}** (`{account_name}`) par generate ho chuka hai.\n\n"

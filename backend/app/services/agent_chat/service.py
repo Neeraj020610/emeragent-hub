@@ -487,14 +487,14 @@ class AgentChatService:
             response_content = regenerated_note + (
                 f"Maine aapke connected Emergent account **`{selected_account.account_name}`** (`app.emergent.sh`) par **Real {'Video Agent' if work_type == 'VIDEO_CREATION' else 'Builder'}** start kar diya hai!\n\n"
                 f"- **Prompt**: `{prompt_for_build[:180]}`\n"
-                f"- **Remaining 50% Guard Headroom**: `{remaining_headroom:.2f}` credits\n"
+                f"- **Account Balance (100% Full Usage)**: `{remaining_headroom:.2f}` credits\n"
                 f"- **Task ID**: `{task.task_identifier}` (`IN_PROGRESS`)\n\n"
                 "Emergent Chrome window me video/build tayyar ho raha hai — aap **Live Emergent Preview** niche **View Generated Deliverables & Script** me dekh sakte hain. Complete hote hi downloadable output yahin update ho jayega!"
                 if is_hinglish
                 else
                 f"Started **Real Emergent {'Video Agent' if work_type == 'VIDEO_CREATION' else 'App Builder'}** on **`{selected_account.account_name}`** (`app.emergent.sh`)!\n\n"
                 f"- **Task ID**: `{task.task_identifier}` (`IN_PROGRESS`)\n"
-                f"- **50% Guard Headroom**: `{remaining_headroom:.2f}` credits\n\n"
+                f"- **Account Balance (100% Full Usage)**: `{remaining_headroom:.2f}` credits\n\n"
                 "Emergent is generating your deliverable in the authenticated Chrome profile. Live progress and the finished `.mp4` / workspace link will update right here automatically once ready."
             )
         else:

@@ -53,3 +53,4 @@ def cleanup_expired_artifacts(base_storage_dir: str = None) -> Dict[str, Any]:
             logger.warning(f"Error scanning directory {directory} for cleanup: {de}")
 
     return stats
+

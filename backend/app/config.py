@@ -1,5 +1,9 @@
+from pathlib import Path
 from typing import List
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_BASE_DIR = Path(__file__).resolve().parent.parent
+_DEFAULT_DB_PATH = (_BASE_DIR / "emergent_hub.db").as_posix()
 
 
 class Settings(BaseSettings):
@@ -10,7 +14,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day
 
     # Database & Redis (Phase 3.2 Fail-Closed Configuration)
-    DATABASE_URL: str = "sqlite:///./emergent_hub.db"
+    DATABASE_URL: str = f"sqlite:///{_DEFAULT_DB_PATH}"
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_KEY_PREFIX: str = "ech:otp:transient"
     REDIS_SOCKET_TIMEOUT: float = 2.0

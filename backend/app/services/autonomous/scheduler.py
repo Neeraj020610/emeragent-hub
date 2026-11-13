@@ -156,15 +156,19 @@ class AccountCreditScheduler:
                 # Clear orphaned task pointer
                 budget.active_task_id = None
 
-        # 50% Planned Usage Ceiling Check
-        ceiling_limit = (budget.starting_balance * budget.ceiling_percentage) / Decimal("100.00")
+        # 100% Full Credit Pool Usage Check (Burn down to 0)
+        ceiling_limit = budget.starting_balance if budget.starting_balance > Decimal("0") else Decimal("999999.00")
         current_committed = budget.credit_usage + budget.reserved_credits
+
+        if budget.verified_current_balance is not None and budget.verified_current_balance <= Decimal("0"):
+            budget.is_eligible = False
+            budget.ineligibility_reason = "Account credits fully exhausted (0 Cr remaining)."
+            return False, budget.ineligibility_reason
 
         if current_committed >= ceiling_limit:
             budget.is_eligible = False
             budget.ineligibility_reason = (
-                f"50% Planned Usage Ceiling reached: Committed {current_committed:.4f} >= Ceiling {ceiling_limit:.4f} "
-                f"(Starting: {budget.starting_balance:.4f})"
+                f"100% Credit Pool Exhausted: Committed {current_committed:.4f} >= Starting {ceiling_limit:.4f}"
             )
             return False, budget.ineligibility_reason
 
@@ -179,11 +183,10 @@ class AccountCreditScheduler:
         db: Session,
     ) -> Optional[Tuple[EmergentAccount, AccountCreditBudget]]:
         """
-        Selects an eligible account with a valid session and sufficient available budget below the 50% ceiling.
-        Orders candidates by available remaining headroom (highest first) to balance load.
+        Selects an eligible account with a valid session and sufficient available budget (100% full usage).
+        Prioritizes the currently active single worker account.
         """
-        all_accounts = db.query(
-            EmergentAccount).filter(EmergentAccount.status == "active").all()
+        all_accounts = db.query(EmergentAccount).filter(EmergentAccount.status == "active").all()
         candidates: List[Tuple[EmergentAccount, AccountCreditBudget, Decimal]] = []
 
         for acc in all_accounts:
@@ -193,23 +196,27 @@ class AccountCreditScheduler:
                 logger.warning(f"Account {acc.id} ({acc.account_name}) ineligible: {reason}")
                 continue
 
-            ceiling_limit = (budget.starting_balance * budget.ceiling_percentage) / Decimal("100.00")
+            ceiling_limit = budget.starting_balance if budget.starting_balance > Decimal("0") else Decimal("999999.00")
             current_committed = budget.credit_usage + budget.reserved_credits
             remaining_headroom = ceiling_limit - current_committed
+            if budget.verified_current_balance is not None:
+                remaining_headroom = min(remaining_headroom, budget.verified_current_balance - budget.reserved_credits)
 
             # Check if estimated cost fits within headroom
             if estimated_cost > Decimal("0.0000") and estimated_cost > remaining_headroom:
                 continue
 
-            candidates.append((acc, budget, remaining_headroom))
+            # Prioritize currently CONNECTED active worker account
+            is_active_worker = 1 if acc.connection_status == "CONNECTED" else 0
+            candidates.append((acc, budget, remaining_headroom, is_active_worker))
 
         if not candidates:
-            logger.warning("No eligible account found within 50% ceiling or with active session.")
+            logger.warning("No eligible account found with active session or available credits.")
             return None
 
-        # Sort by remaining headroom descending (account with most available budget first)
-        candidates.sort(key=lambda x: x[2], reverse=True)
-        selected_acc, selected_budget, _ = candidates[0]
+        # Sort: active worker first, then highest remaining balance
+        candidates.sort(key=lambda x: (x[3], x[2]), reverse=True)
+        selected_acc, selected_budget, _, _ = candidates[0]
         return selected_acc, selected_budget
 
     def reserve_budget(
@@ -220,18 +227,18 @@ class AccountCreditScheduler:
         db: Session,
     ) -> bool:
         """
-        Atomically reserves estimated credits and locks account to active task.
+        Atomically reserves estimated credits and locks account to active task (100% full usage).
         """
         budget = self.get_or_create_budget(account_id, db)
         if budget.active_task_id == task_id:
             # Already locked to this task for continuation checkpoints
             return True
 
-        ceiling_limit = (budget.starting_balance * budget.ceiling_percentage) / Decimal("100.00")
+        ceiling_limit = budget.starting_balance if budget.starting_balance > Decimal("0") else Decimal("999999.00")
         current_committed = budget.credit_usage + budget.reserved_credits
 
-        if current_committed + estimated_cost > ceiling_limit:
-            logger.error(f"Cannot reserve {estimated_cost:.4f} for account {account_id}: exceeds 50% ceiling.")
+        if current_committed + estimated_cost > ceiling_limit and budget.starting_balance > Decimal("0"):
+            logger.error(f"Cannot reserve {estimated_cost:.4f} for account {account_id}: exceeds available balance.")
             return False
 
         budget.reserved_credits += estimated_cost

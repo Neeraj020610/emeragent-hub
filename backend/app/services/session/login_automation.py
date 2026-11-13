@@ -338,28 +338,42 @@ async def scrape_credits_from_active_session(account_id: int) -> Optional[float]
                 profile_dir = manager._get_browser_profile_dir(account_id)
                 if profile_dir and os.path.exists(profile_dir):
                     cleanup_stale_profile_locks(profile_dir)
-                    chrome_candidates = [
-                        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                        r"C:\Users\Admin\AppData\Local\ms-playwright\chromium-1248\chrome-win64\chrome.exe",
-                    ]
-                    exe_path = next((c for c in chrome_candidates if os.path.exists(c)), None)
+                    browser_exe = manager.find_dedicated_browser() or manager.find_system_browser()
+                    is_linux = os.name != "nt"
+                    has_display = bool(os.environ.get("DISPLAY"))
+                    extra_flags = []
+                    if is_linux:
+                        extra_flags.extend(["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"])
+                        if not has_display:
+                            extra_flags.append("--headless=new")
+
                     context = await pw.chromium.launch_persistent_context(
                         user_data_dir=profile_dir,
-                        executable_path=exe_path,
-                        headless=True,
-                        args=["--no-first-run", "--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
+                        executable_path=browser_exe,
+                        headless=(not has_display if is_linux else True),
+                        args=["--no-first-run", "--no-default-browser-check", "--disable-blink-features=AutomationControlled"] + extra_flags,
                     )
                     try:
                         p = context.pages[0] if context.pages else await context.new_page()
-                        await p.goto("https://app.emergent.sh/home", timeout=20000, wait_until="domcontentloaded")
-                        await asyncio.sleep(3.0)
+                        await p.goto("https://app.emergent.sh/home", timeout=25000, wait_until="domcontentloaded")
+                        await asyncio.sleep(3.5)
                         if await _is_dashboard_page(p):
                             session_valid = True
                             await _scrape_and_record_credits(p, account_id)
                         else:
-                            _mark_session_expired(account_id, f"Emergent redirected to {p.url} — session expired, Sign In required.")
-                            return None
+                            # Re-check cookies or retry once before marking expired
+                            cookies = await context.cookies()
+                            has_auth_cookie = any(c.get("name") in ("emergent_logged_in", "emergent-user-email") for c in cookies)
+                            if has_auth_cookie:
+                                await p.goto("https://app.emergent.sh/home", timeout=15000, wait_until="networkidle")
+                                await asyncio.sleep(2.5)
+                                if await _is_dashboard_page(p):
+                                    session_valid = True
+                                    await _scrape_and_record_credits(p, account_id)
+
+                            if not session_valid:
+                                _mark_session_expired(account_id, f"Emergent redirected to {p.url} — session expired, Sign In required.")
+                                return None
                     finally:
                         await context.close()
         except Exception as e:
@@ -621,11 +635,14 @@ async def execute_automated_login(
             # 1. Click 'Continue with Email' if email/password form is not yet visible
             if not await email_loc.is_visible(timeout=1200):
                 for _attempt in range(4):
-                    btn = page.locator("button:has-text('Continue with Email'):visible").first
+                    btn = page.locator("button:has-text('Continue with Email'):visible, button[data-testid='landing-continue-with-email']:visible").first
                     if await btn.is_visible(timeout=3000):
-                        await btn.evaluate("e => e.scrollIntoView({block: 'center', inline: 'center'})")
-                        await asyncio.sleep(0.2)
-                        await btn.click(timeout=5000)
+                        try:
+                            await btn.evaluate("e => e.scrollIntoView({block: 'center', inline: 'center'})")
+                            await asyncio.sleep(0.2)
+                            await btn.dispatch_event("click")
+                        except Exception:
+                            await btn.click(timeout=3000, force=True)
                         await asyncio.sleep(1.5)
                     if await email_loc.is_visible(timeout=1500):
                         break
@@ -640,13 +657,12 @@ async def execute_automated_login(
                         break
                     signin_link = page.get_by_text("Sign in", exact=True).last
                     if await signin_link.is_visible(timeout=1500):
-                        # Center in viewport so sticky header never intercepts pointer events
-                        await signin_link.evaluate("e => e.scrollIntoView({block: 'center', inline: 'center'})")
-                        await asyncio.sleep(0.2)
                         try:
-                            await signin_link.click(timeout=5000)
+                            await signin_link.evaluate("e => e.scrollIntoView({block: 'center', inline: 'center'})")
+                            await asyncio.sleep(0.2)
+                            await signin_link.dispatch_event("click")
                         except Exception:
-                            await signin_link.evaluate("e => e.click()")
+                            await signin_link.click(timeout=3000, force=True)
                         await asyncio.sleep(1.2)
 
             # 3. Verify & Enter Email and Password
@@ -972,6 +988,13 @@ def _mark_session_active(account_id: int):
             acc.last_connected_at = now
 
         db.commit()
+
+        # Enforce single active worker account across the pool
+        try:
+            from app.services.session.failover_service import enforce_single_active_account
+            enforce_single_active_account(account_id)
+        except Exception:
+            pass
     finally:
         db.close()
 

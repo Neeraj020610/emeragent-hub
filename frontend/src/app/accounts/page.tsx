@@ -427,7 +427,7 @@ function AccountsContent() {
         if (prog.otp_code) setDetectedOtp(prog.otp_code);
         if (prog.screenshot_url) setScreenshotUrl(prog.screenshot_url);
 
-        if (prog.status === "SUCCESS" || prog.is_complete && !prog.error) {
+        if (prog.status === "SUCCESS") {
           setLoginStep("verified");
           loadSessions();
           loadAccounts();
@@ -593,9 +593,25 @@ function AccountsContent() {
     const s = (status || "").toUpperCase();
     if (s === "CONNECTED" || s === "AUTHENTICATED" || s === "ACTIVE") {
       return (
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-          Connected
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+          Active Worker
+        </span>
+      );
+    }
+    if (s === "STANDBY" || s === "IDLE") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+          <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+          Standby (Queue)
+        </span>
+      );
+    }
+    if (s === "EXHAUSTED" || s === "CREDITS_FINISHED") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-rose-50 text-rose-800 border border-rose-200">
+          <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+          Credits Finished
         </span>
       );
     }
@@ -761,23 +777,25 @@ function AccountsContent() {
                       {renderConnectionBadge(acc.connection_status)}
                     </td>
                     <td className="px-4 py-3 font-mono font-semibold text-slate-900">
-                      {acc.connection_status === "CONNECTED" || acc.connection_status === "AUTHENTICATED" ? (
-                        acc.latest_credit_balance !== null && acc.latest_credit_balance !== undefined ? (
-                          <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-xs">
-                            {Number(acc.latest_credit_balance).toLocaleString()} Credits
-                          </span>
-                        ) : (
-                          <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 text-xs font-sans">
-                            0 Credits
-                          </span>
-                        )
+                      {acc.latest_credit_balance !== null && acc.latest_credit_balance !== undefined && Number(acc.latest_credit_balance) > 0 ? (
+                        <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-xs font-mono font-bold">
+                          {Number(acc.latest_credit_balance).toLocaleString()} Credits
+                        </span>
+                      ) : (acc.connection_status as string) === "EXHAUSTED" ? (
+                        <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 text-xs font-sans">
+                          0 Credits (Finished)
+                        </span>
+                      ) : (acc.connection_status as string) === "CONNECTED" || (acc.connection_status as string) === "STANDBY" ? (
+                        <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 text-xs font-sans">
+                          0 Credits (Pending Sync)
+                        </span>
                       ) : (
                         <span className="text-slate-400 font-sans text-xs italic">Login required</span>
                       )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        {(acc.connection_status === "CONNECTED" || acc.connection_status === "AUTHENTICATED") && (
+                        {((acc.connection_status as string) === "CONNECTED" || (acc.connection_status as string) === "STANDBY" || (acc.connection_status as string) === "AUTHENTICATED") && (
                           <button
                             type="button"
                             disabled={syncingAccountId === acc.id}

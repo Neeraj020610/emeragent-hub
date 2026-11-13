@@ -230,7 +230,7 @@ async def submit_manual_otp(
 
 
 @router.post("/{account_id}/confirm-dashboard", response_model=AccountSessionResponse)
-def confirm_dashboard_verification(
+async def confirm_dashboard_verification(
     account_id: int,
     request: Request,
     current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
@@ -238,12 +238,21 @@ def confirm_dashboard_verification(
 ):
     """Confirms authenticated Emergent dashboard was opened in isolated browser and marks session ACTIVE."""
     client_ip = request.client.host if request.client else None
-    return session_manager.confirm_dashboard_verification(
+    res = session_manager.confirm_dashboard_verification(
         db=db,
         account_id=account_id,
         current_user=current_user,
         client_ip=client_ip,
     )
+
+    # Immediately synchronize credits from live Emergent dashboard
+    try:
+        from app.services.session.login_automation import scrape_credits_from_active_session
+        await scrape_credits_from_active_session(account_id)
+    except Exception:
+        pass
+
+    return res
 
 
 @router.post("/{account_id}/start-automated-login")
