@@ -62,6 +62,70 @@ def enforce_single_active_account(active_account_id: int):
         db.close()
 
 
+def handle_account_logged_in(account_id: int):
+    """
+    Enforces that an already ACTIVE account with positive credits is NEVER preempted:
+    - If there is already an active worker with positive credits, the newly logged-in account
+      is placed safely in STANDBY state in the queue.
+    - If there is NO active worker with positive credits, this account becomes the active worker.
+    """
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        # Check if another account is already CONNECTED and ACTIVE with positive credits
+        active_candidate = (
+            db.query(EmergentAccount)
+            .join(AccountSession, EmergentAccount.id == AccountSession.account_id)
+            .filter(
+                EmergentAccount.id != account_id,
+                EmergentAccount.connection_status == "CONNECTED",
+                AccountSession.session_status == "ACTIVE",
+            )
+            .first()
+        )
+
+        has_active_worker = False
+        if active_candidate:
+            latest_snap = (
+                db.query(CreditSnapshot)
+                .filter(CreditSnapshot.account_id == active_candidate.id)
+                .order_by(CreditSnapshot.id.desc())
+                .first()
+            )
+            if latest_snap and latest_snap.available_credits and latest_snap.available_credits > 0:
+                has_active_worker = True
+
+        acc = db.query(EmergentAccount).filter(EmergentAccount.id == account_id).first()
+        sess = db.query(AccountSession).filter(AccountSession.account_id == account_id).first()
+
+        if has_active_worker:
+            # Active worker already exists with positive balance! Place this account in STANDBY
+            if acc:
+                acc.connection_status = "STANDBY"
+                acc.last_connected_at = now
+                acc.updated_at = now
+            if sess:
+                sess.session_status = "STANDBY"
+                sess.reauth_required = False
+                sess.reauth_reason = None
+                sess.last_active_at = now
+                sess.updated_at = now
+            db.commit()
+            logger.info(f"Account {account_id} placed in STANDBY queue because active worker {active_candidate.id} still has credits.")
+        else:
+            # No active worker exists with positive credits. Promote this account to single active worker
+            db.close()
+            enforce_single_active_account(account_id)
+            return
+    except Exception as e:
+        logger.warning(f"Error in handle_account_logged_in: {e}")
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
 async def auto_failover_exhausted_account(exhausted_account_id: int) -> Optional[int]:
     """
     Called when an active account's credits are completely consumed (balance <= 0):

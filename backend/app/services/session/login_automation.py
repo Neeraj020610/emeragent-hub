@@ -1038,10 +1038,10 @@ def _mark_session_active(account_id: int):
 
         db.commit()
 
-        # Enforce single active worker account across the pool
+        # Enforce single active worker policy without preempting an active account with credits
         try:
-            from app.services.session.failover_service import enforce_single_active_account
-            enforce_single_active_account(account_id)
+            from app.services.session.failover_service import handle_account_logged_in
+            handle_account_logged_in(account_id)
         except Exception:
             pass
     finally:

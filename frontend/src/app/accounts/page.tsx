@@ -128,6 +128,9 @@ function AccountsContent() {
     if (session?.role) {
       setCurrentUserRole(session.role);
     }
+    if (session?.fullName) {
+      setNewOwner(session.fullName);
+    }
   }, []);
 
   const isExecutive = currentUserRole === "EXECUTIVE";
@@ -617,7 +620,8 @@ function AccountsContent() {
   );
 
   // Strict Active Worker: Account must have a verified positive credit balance
-  const activeWorkerCandidates = accounts
+  // 1. Look for an explicitly CONNECTED/ACTIVE account with positive credits first
+  const connectedCandidates = accounts
     .filter(
       (a) =>
         ((a.connection_status || "").toUpperCase() === "CONNECTED" || (a.connection_status || "").toUpperCase() === "ACTIVE") &&
@@ -626,7 +630,19 @@ function AccountsContent() {
     )
     .sort((a, b) => a.id - b.id);
 
-  const activeWorkerId = activeWorkerCandidates.length > 0 ? activeWorkerCandidates[0].id : null;
+  // 2. If eligible positive-credit accounts are in STANDBY, promote the first FIFO account as the active worker!
+  const standbyCandidates = accounts
+    .filter(
+      (a) =>
+        (a.connection_status || "").toUpperCase() === "STANDBY" &&
+        a.latest_credit_balance !== null &&
+        Number(a.latest_credit_balance) > 0
+    )
+    .sort((a, b) => a.id - b.id);
+
+  const activeWorkerId = connectedCandidates.length > 0
+    ? connectedCandidates[0].id
+    : (standbyCandidates.length > 0 ? standbyCandidates[0].id : null);
 
   // Standby Queue: other verified accounts with positive credits, ordered strictly FIFO by account.id
   const standbyAccounts = accounts
@@ -878,7 +894,22 @@ function AccountsContent() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
-                {filteredAccounts.map((acc) => (
+                {filteredAccounts.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-12 text-center text-slate-400">
+                      <div className="max-w-xs mx-auto space-y-2">
+                        <Server className="w-8 h-8 mx-auto text-slate-300" />
+                        <div className="font-semibold text-slate-700">No accounts registered yet</div>
+                        <p className="text-[11px] text-slate-500">
+                          {isExecutive
+                            ? "You haven't added any accounts yet. Click '+ Add Account' above to onboard your first Emergent account!"
+                            : "Click '+ Add Account' above to register your first Emergent account."}
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredAccounts.map((acc) => (
                   <tr key={acc.id} className="hover:bg-slate-50/60">
                     <td className="px-4 py-3">
                       <div className="font-bold text-slate-900">{acc.account_name}</div>
@@ -953,7 +984,7 @@ function AccountsContent() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                )))}
               </tbody>
             </table>
           </div>

@@ -188,11 +188,8 @@ def create_account(
             detail=f"Account with identifier '{account_ident}' already exists.",
         )
 
-    owner_user_id = payload.owner_user_id or current_user.id
-    owner_name = payload.owner_name
-    if not owner_name:
-        owner = db.query(User).filter(User.id == owner_user_id).first()
-        owner_name = owner.full_name if owner else current_user.full_name
+    owner_user_id = current_user.id
+    owner_name = current_user.full_name
 
     from app.core.security import encrypt_token
     raw_pwd = (payload.password or "").strip()
@@ -227,6 +224,16 @@ def create_account(
         authenticated_by_user_id=current_user.id,
     )
     db.add(sess)
+
+    # Explicitly record permission for creator
+    perm = AccountPermission(
+        account_id=account.id,
+        user_id=current_user.id,
+        can_view=True,
+        can_modify=True,
+        can_execute=True,
+    )
+    db.add(perm)
 
     # If mailbox_email provided, map to MailboxAccount
     if payload.mailbox_email:

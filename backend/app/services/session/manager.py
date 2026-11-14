@@ -684,6 +684,17 @@ class MultiAccountSessionManager:
             )
 
         sessions = query.order_by(desc(AccountSession.last_active_at)).all()
+        now = datetime.now(timezone.utc)
+        for s in sessions:
+            if s.session_status == "LOGIN_IN_PROGRESS" and s.updated_at:
+                updated_ts = s.updated_at
+                if updated_ts.tzinfo is None:
+                    updated_ts = updated_ts.replace(tzinfo=timezone.utc)
+                if (now - updated_ts).total_seconds() > 300:
+                    s.session_status = "NOT_CONNECTED"
+                    s.reauth_reason = "Login process timed out"
+                    db.commit()
+
         return [self._format_session_response(s, current_user) for s in sessions]
 
     def get_session_stats(self, db: Session, current_user: User) -> AccountSessionStats:
