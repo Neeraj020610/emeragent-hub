@@ -181,6 +181,8 @@ export default function TeamPage() {
     }
   };
 
+  const isCurrentSuperAdmin = currentUserRole === "SUPERADMIN" || currentUserRole === "SUPER_ADMIN";
+
   // If logged in as Executive, restrict access to this page
   if (currentUserRole === "EXECUTIVE") {
     return (
@@ -264,7 +266,22 @@ export default function TeamPage() {
         )}
 
         {/* Role Breakdown Reference Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-gradient-to-b from-amber-50/50 to-white p-4 rounded-xl border border-amber-300 shadow-xs relative overflow-hidden">
+            <div className="flex items-center justify-between mb-2">
+              <span className="font-bold text-xs uppercase tracking-wide text-amber-900 flex items-center gap-1.5">
+                <Shield className="w-4 h-4 text-amber-600" />
+                SUPERADMIN (Supreme)
+              </span>
+              <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
+                Supreme Authority
+              </span>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Unrestricted supreme control across all accounts, credit pools, and platform configs. <strong>Protected from deletion or credential reset by standard Admins.</strong>
+            </p>
+          </div>
+
           <div className="bg-white p-4 rounded-xl border border-purple-200 shadow-xs relative overflow-hidden">
             <div className="flex items-center justify-between mb-2">
               <span className="font-bold text-xs uppercase tracking-wide text-purple-900 flex items-center gap-1.5">
@@ -272,11 +289,11 @@ export default function TeamPage() {
                 ADMIN (Administrator)
               </span>
               <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
-                Full System Control
+                Full Platform Control
               </span>
             </div>
             <p className="text-xs text-slate-600 leading-relaxed">
-              Allowed to generate videos and AI builds, add and delete Emergent accounts, manage credit pools, and create or manage other user accounts.
+              Allowed to generate videos and AI builds, add and delete Emergent accounts, manage credit pools, and manage executive accounts.
             </p>
           </div>
 
@@ -321,18 +338,24 @@ export default function TeamPage() {
                 {users.map((u) => {
                   const roleName = u.role?.name || "EXECUTIVE";
                   const isCurrentLoggedAdmin = u.id === currentUserId;
+                  const isSuperAdminTarget = roleName === "SUPERADMIN" || roleName === "SUPER_ADMIN";
+                  const canManageTarget = isCurrentSuperAdmin || (!isSuperAdminTarget && currentUserRole === "ADMIN");
 
                   return (
                     <tr key={u.id} className="hover:bg-slate-50/70 transition-colors">
                       <td className="py-3 px-4">
                         <div className="font-semibold text-slate-900 flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-slate-600 text-xs">
-                            {u.full_name?.charAt(0).toUpperCase() || "U"}
+                          <div className={`w-7 h-7 rounded-lg border flex items-center justify-center font-bold text-xs ${
+                            isSuperAdminTarget
+                              ? "bg-amber-100/80 border-amber-300 text-amber-800"
+                              : "bg-slate-100 border-slate-200 text-slate-600"
+                          }`}>
+                            {isSuperAdminTarget ? "👑" : (u.full_name?.charAt(0).toUpperCase() || "U")}
                           </div>
                           <div>
                             <div>{u.full_name}</div>
                             {isCurrentLoggedAdmin && (
-                              <div className="text-[10px] text-purple-600 font-medium">You (Logged In)</div>
+                              <div className="text-[10px] text-amber-600 font-semibold">You (Logged In)</div>
                             )}
                           </div>
                         </div>
@@ -341,14 +364,16 @@ export default function TeamPage() {
                       <td className="py-3 px-4">
                         <span
                           className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase inline-flex items-center gap-1 ${
-                            roleName === "ADMIN"
+                            isSuperAdminTarget
+                              ? "bg-amber-50 text-amber-800 border border-amber-300 shadow-xs ring-1 ring-amber-400/20 font-extrabold"
+                              : roleName === "ADMIN"
                               ? "bg-purple-50 text-purple-700 border border-purple-200"
                               : roleName === "EXECUTIVE"
                               ? "bg-blue-50 text-blue-700 border border-blue-200"
                               : "bg-slate-100 text-slate-700 border border-slate-200"
                           }`}
                         >
-                          {roleName === "ADMIN" ? "👑 ADMIN" : "👤 EXECUTIVE"}
+                          {isSuperAdminTarget ? "👑 SUPER ADMIN" : roleName === "ADMIN" ? "🛡️ ADMIN" : "👤 EXECUTIVE"}
                         </span>
                       </td>
                       <td className="py-3 px-4">
@@ -362,28 +387,47 @@ export default function TeamPage() {
                       </td>
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setUserToReset(u);
-                              setNewPassword("");
-                            }}
-                            className="px-2 py-1 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded border border-slate-200 text-xs flex items-center gap-1 transition-colors"
-                            title="Reset password for this user"
-                          >
-                            <KeyRound className="w-3 h-3" />
-                            <span>Password</span>
-                          </button>
-
-                          {!isCurrentLoggedAdmin && (
+                          {canManageTarget ? (
                             <button
                               type="button"
-                              onClick={() => setUserToDelete(u)}
-                              className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
-                              title="Delete user"
+                              onClick={() => {
+                                setUserToReset(u);
+                                setNewPassword("");
+                              }}
+                              className="px-2 py-1 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded border border-slate-200 text-xs flex items-center gap-1 transition-colors"
+                              title="Reset password for this user"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <KeyRound className="w-3 h-3" />
+                              <span>Password</span>
                             </button>
+                          ) : (
+                            <span
+                              className="px-2 py-1 text-slate-400 bg-slate-100/70 rounded border border-slate-200 text-[11px] flex items-center gap-1 cursor-not-allowed opacity-75"
+                              title="Supreme Protection: Only a Super Admin can modify a Super Admin account"
+                            >
+                              <Lock className="w-3 h-3 text-amber-600" />
+                              <span>Protected</span>
+                            </span>
+                          )}
+
+                          {!isCurrentLoggedAdmin && (
+                            canManageTarget ? (
+                              <button
+                                type="button"
+                                onClick={() => setUserToDelete(u)}
+                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
+                                title="Delete user"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            ) : (
+                              <span
+                                className="p-1 text-amber-600/40 bg-amber-50/50 rounded cursor-not-allowed inline-flex items-center"
+                                title="Supreme Protection: Super Admin accounts can only be deleted by another Super Admin"
+                              >
+                                <Shield className="w-3.5 h-3.5 text-amber-600" />
+                              </span>
+                            )
                           )}
                         </div>
                       </td>
@@ -475,25 +519,34 @@ export default function TeamPage() {
                   onChange={(e) => setSelectedRoleId(Number(e.target.value))}
                   className="w-full mt-1 px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white font-medium focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                 >
-                  {roles.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name === "EXECUTIVE"
-                        ? "👤 EXECUTIVE — Account Registration & OTP Verification"
-                        : r.name === "ADMIN"
-                        ? "👑 ADMIN — Full Platform & Video Generation Access"
-                        : `${r.name} — ${r.description || ""}`}
-                    </option>
-                  ))}
+                  {roles.map((r) => {
+                    const isSuperRole = r.name === "SUPERADMIN" || r.name === "SUPER_ADMIN";
+                    return (
+                      <option key={r.id} value={r.id} disabled={isSuperRole && !isCurrentSuperAdmin}>
+                        {isSuperRole
+                          ? `👑 SUPERADMIN — Supreme Platform Authority & Protection ${!isCurrentSuperAdmin ? "(Requires Super Admin)" : ""}`
+                          : r.name === "ADMIN"
+                          ? "🛡️ ADMIN — Full Platform & Video Generation Access"
+                          : r.name === "EXECUTIVE"
+                          ? "👤 EXECUTIVE — Account Registration & OTP Verification"
+                          : `${r.name} — ${r.description || ""}`}
+                      </option>
+                    );
+                  })}
                 </select>
 
                 <div className="mt-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-600">
-                  {selectedRoleObj?.name === "EXECUTIVE" ? (
+                  {selectedRoleObj?.name === "SUPERADMIN" || selectedRoleObj?.name === "SUPER_ADMIN" ? (
+                    <span className="text-amber-900">
+                      👑 <strong>Super Admin Role:</strong> Supreme authority across all platform features. <strong>Cannot be deleted or modified by standard Admins.</strong>
+                    </span>
+                  ) : selectedRoleObj?.name === "EXECUTIVE" ? (
                     <span>
                       👤 <strong>Executive Role:</strong> Main work is registering new Emergent accounts and OTP verification. <strong>Video generation & account deletion will be blocked.</strong>
                     </span>
                   ) : (
                     <span>
-                      👑 <strong>Admin Role:</strong> Has complete platform privileges including generating videos, deleting accounts, and managing user logins.
+                      🛡️ <strong>Admin Role:</strong> Has complete operational privileges including generating videos, managing credit pools, and managing user logins.
                     </span>
                   )}
                 </div>
@@ -581,6 +634,16 @@ export default function TeamPage() {
               Are you sure you want to delete <strong>{userToDelete.full_name}</strong> (
               <span className="font-mono">{userToDelete.email}</span>)? They will no longer be able to log in.
             </p>
+
+            {userToDelete && (userToDelete.role?.name === "SUPERADMIN" || userToDelete.role?.name === "SUPER_ADMIN") && (
+              <div className="mt-3 p-3 rounded-lg bg-amber-50 border border-amber-300 text-xs text-amber-900 flex items-start gap-2">
+                <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="block font-semibold">Supreme Protection Notice:</strong>
+                  This account has Supreme Authority. Only an active Super Admin can authorize deletion, and at least one Super Admin must remain active.
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center justify-end gap-2 mt-5">
               <button

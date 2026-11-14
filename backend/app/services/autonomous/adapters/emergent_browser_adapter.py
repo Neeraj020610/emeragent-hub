@@ -17,6 +17,8 @@ from app.database import SessionLocal
 from app.models.account import EmergentAccount
 from app.models.autonomous import AccountCreditBudget, AutonomousTask, AutonomousTaskLog
 from app.models.chat import ConversationMessage
+from app.models.credit import CreditSnapshot
+from app.models.session import AccountSession
 from app.services.autonomous.scheduler import AccountCreditScheduler
 from app.services.session.login_automation import (
     _is_dashboard_page,
@@ -187,6 +189,19 @@ async def _save_task_screenshot(page: Page, task_identifier: str) -> str:
 
 async def _scrape_credits_number(page: Page) -> Optional[float]:
     try:
+        # 0. Check Studio Composer bottom bar / pill (e.g. "30.77 credits remaining" or "20.77 credits remaining")
+        try:
+            studio_badge = page.locator("*:has-text('credits remaining')").first
+            if await studio_badge.is_visible(timeout=800):
+                txt = (await studio_badge.inner_text() or "").strip()
+                m_st = re.search(r'(\d+(?:\.\d+)?)\s*credits', txt, re.I)
+                if m_st:
+                    val = float(m_st.group(1))
+                    if val >= 0:
+                        return val
+        except Exception:
+            pass
+
         # 1. Primary: Direct Emergent Header Credit Pill (v3/v2 exact decimal balance, e.g. "157.95")
         try:
             pill = page.locator(
@@ -415,13 +430,84 @@ async def _detect_emergent_preview_url(page: Page) -> Optional[str]:
         return None
 
 
+def _mark_account_exhausted_immediate(account_id: int, reason: str = "Credits Depleted (0.00 Cr remaining)"):
+    """Instantly updates DB so all dashboard tabs show 0.00 Cr, EXHAUSTED status, and ineligibility."""
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        budget = db.query(AccountCreditBudget).filter(AccountCreditBudget.account_id == account_id).first()
+        if budget:
+            budget.verified_current_balance = Decimal("0.0000")
+            budget.is_eligible = False
+            budget.ineligibility_reason = reason
+            budget.last_balance_validated_at = now
+            if budget.starting_balance and budget.starting_balance > 0:
+                budget.credit_usage = budget.starting_balance
+
+        acc = db.query(EmergentAccount).filter(EmergentAccount.id == account_id).first()
+        if acc:
+            acc.connection_status = "EXHAUSTED"
+            acc.last_synced_at = now
+            acc.updated_at = now
+
+        sess = db.query(AccountSession).filter(AccountSession.account_id == account_id).first()
+        if sess:
+            sess.session_status = "EXPIRED"
+            sess.reauth_required = True
+            sess.reauth_reason = reason
+            sess.updated_at = now
+
+        snap = CreditSnapshot(
+            account_id=account_id,
+            available_credits=Decimal("0.0000"),
+            consumed_credits=budget.credit_usage if budget else Decimal("0.0000"),
+            total_allocated=budget.starting_balance if budget else Decimal("0.0000"),
+            balance_source="REAL_PROVIDER",
+            is_estimate=False,
+        )
+        db.add(snap)
+        db.commit()
+        logger.info(f"Marked account {account_id} exhausted (0.00 Cr) in DB.")
+    except Exception as e:
+        logger.warning(f"Error marking account {account_id} exhausted: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
 async def _check_emergent_errors(page: Page) -> Optional[str]:
-    for sel in ["[role='alert']", "text=/insufficient credits/i", "text=/out of credits/i", "text=/quota exceeded/i", "text=/failed to generate/i"]:
+    # 1. First priority: Check Purchase Credits modal / Insufficient credits modal
+    for sel in [
+        "h2:has-text('Purchase Credits')",
+        "div:has-text('Purchase Credits'):visible",
+        "button:has-text('Upgrade to Standard'):visible",
+        "button:has-text('Buy Now'):visible",
+        "[role='dialog']:has-text('Purchase Credits')",
+        "[role='dialog']:has-text('Buy Now')",
+        "text=/Purchase Credits/i",
+    ]:
+        try:
+            el = page.locator(sel).first
+            if await el.is_visible(timeout=200):
+                return "CREDITS_EXHAUSTED: Emergent 'Purchase Credits' popup displayed (Account credits depleted to 0.00)"
+        except Exception:
+            pass
+
+    # 2. Alert banners / toast errors
+    for sel in [
+        "[role='alert']",
+        "text=/insufficient credits/i",
+        "text=/out of credits/i",
+        "text=/quota exceeded/i",
+        "text=/failed to generate/i",
+    ]:
         try:
             el = page.locator(sel).first
             if await el.is_visible(timeout=200):
                 txt = (await el.inner_text()).strip()
                 if txt and len(txt) < 220:
+                    if any(k in txt.lower() for k in ("credit", "quota", "purchase", "balance")):
+                        return f"CREDITS_EXHAUSTED: {txt}"
                     return txt
         except Exception:
             pass
@@ -564,6 +650,13 @@ async def _execute_emergent_browser_workflow(
             checkpoints.append({"step": "EMERGENT_PROMPT_SUBMITTED", "completed_at": utcnow().isoformat()})
             _update_task_fields(task_id, checkpoints=checkpoints)
 
+            # Real-time credit sync immediately after prompt submission
+            try:
+                await asyncio.sleep(2.0)
+                await _scrape_and_record_credits(page, account_id)
+            except Exception as cr_init_err:
+                logger.debug(f"Initial prompt credit sync note: {cr_init_err}")
+
             current_stage = "Waiting for Emergent workspace deliverable"
 
             # Wait up to 15s for workspace navigation
@@ -598,6 +691,23 @@ async def _execute_emergent_browser_workflow(
                     emergent_url = page.url
 
                 await _dismiss_emergent_overlays(page)
+
+                # Real-time periodic credit inspection & database sync every 15s (every 3rd poll)
+                if poll_idx % 3 == 0:
+                    try:
+                        live_cr = await _scrape_and_record_credits(page, account_id)
+                        if live_cr is not None:
+                            logger.info(f"Live credit balance for task {task_identifier} (Account {account_id}): {live_cr} Cr")
+                            if live_cr < Decimal("5.0"):
+                                _append_task_log(
+                                    task_id,
+                                    f"Live account credits depleted to {live_cr} (< 5.0 Cr). Account marked inactive (< 5 Cr); auto-failover initiated.",
+                                    step="CREDITS_DEPLETED",
+                                    level="WARN"
+                                )
+                    except Exception as cr_err:
+                        logger.debug(f"Live periodic credit sync note: {cr_err}")
+
                 # Auto-advance Emergent Video Director approval gates (Frames / Scenes) & unanswered wizard
                 if work_type == "VIDEO_CREATION":
                     try:
@@ -621,7 +731,58 @@ async def _execute_emergent_browser_workflow(
 
                 err_banner = await _check_emergent_errors(page)
                 if err_banner:
-                    raise RuntimeError(f"Emergent returned error: {err_banner}")
+                    if "CREDITS_EXHAUSTED" in err_banner or any(k in err_banner.lower() for k in ("insufficient credits", "out of credits", "purchase credits")):
+                        _append_task_log(
+                            task_id,
+                            f"Credits exhausted during build on '{account_name}': {err_banner}. Failover initiating.",
+                            step="CREDITS_EXHAUSTED",
+                            level="WARN",
+                        )
+                        _mark_account_exhausted_immediate(account_id, f"Credits depleted ({err_banner})")
+
+                        exhausted_chat_msg = (
+                            f"⚠️ **Credits Exhausted Alert**: Account **{account_name}** par task ke dauran credits khatam ho gaye hain!\n\n"
+                            f"- **Emergent Studio**: 'Purchase Credits' popup display ho chuka hai (0.00 Cr remaining).\n"
+                            f"- **Auto-Failover**: System ne is account ko `0.00 Cr (Exhausted)` mark kar diya hai aur standby pool ke agle account par **Auto-Switch** kar diya hai.\n\n"
+                            f"Aap naya video/prompt bhej sakte hain — yeh agle active worker account par successfully chalega."
+                            if is_hinglish
+                            else f"⚠️ **Credits Exhausted Alert**: Account **{account_name}** ran out of credits during generation!\n\n"
+                            f"- **Emergent Studio**: 'Purchase Credits' popup detected (0.00 Cr remaining).\n"
+                            f"- **Auto-Failover**: The system marked this account as `0.00 Cr (Exhausted)` and switched to the next available standby account in your pool."
+                        )
+                        _post_chat_update(conversation_id, task_id, account_id, exhausted_chat_msg, "FAILED", plan_title=task_title)
+
+                        _update_task_fields(
+                            task_id,
+                            status="FAILED",
+                            error_details=f"Credits exhausted: {err_banner}",
+                            error_classification="CREDITS_EXHAUSTED",
+                            completed=True,
+                        )
+
+                        db_rel = SessionLocal()
+                        try:
+                            scheduler.record_usage_and_release(
+                                account_id=account_id,
+                                task_id=task_id,
+                                estimated_cost=estimated_cost,
+                                actual_cost=Decimal("0.0000"),
+                                usage_type="PLATFORM_BUILD",
+                                db=db_rel,
+                            )
+                        finally:
+                            db_rel.close()
+
+                        try:
+                            from app.services.session.failover_service import auto_failover_exhausted_account
+
+                            asyncio.create_task(auto_failover_exhausted_account(account_id))
+                        except Exception as ex_fail:
+                            logger.warning(f"Error triggering auto-failover: {ex_fail}")
+
+                        return
+                    else:
+                        raise RuntimeError(f"Emergent returned error: {err_banner}")
 
                 if work_type == "VIDEO_CREATION":
                     vid_src = await _detect_emergent_video_asset(page)
@@ -732,12 +893,12 @@ async def _execute_emergent_browser_workflow(
             finally:
                 db_rec.close()
 
-            # Automatic Failover Check: If active account credits reached 0, auto-switch to next account!
-            if end_credits is not None and end_credits <= 0:
+            # Automatic Failover Check: If active account credits dropped below 5 Cr, auto-switch to next account and deactivate!
+            if end_credits is not None and end_credits < 5.0:
                 try:
                     from app.services.session.failover_service import auto_failover_exhausted_account
                     asyncio.create_task(auto_failover_exhausted_account(account_id))
-                    logger.info(f"Account {account_id} credits exhausted (0 Cr). Triggered background auto-failover.")
+                    logger.info(f"Account {account_id} credits dropped below 5 Cr ({end_credits} Cr). Triggered background auto-failover.")
                 except Exception as ex_fail:
                     logger.warning(f"Error triggering auto-failover: {ex_fail}")
 

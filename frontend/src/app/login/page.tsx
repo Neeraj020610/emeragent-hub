@@ -12,8 +12,11 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const selectRolePreset = (role: "ADMIN" | "EXECUTIVE") => {
-    if (role === "ADMIN") {
+  const selectRolePreset = (role: "SUPERADMIN" | "ADMIN" | "EXECUTIVE") => {
+    if (role === "SUPERADMIN") {
+      setEmail("superadmin@emergent-hub.com");
+      setPassword("SuperAdmin2026!");
+    } else if (role === "ADMIN") {
       setEmail("admin@emergent-hub.com");
       setPassword("EmergentAdmin2026!");
     } else {
@@ -50,6 +53,7 @@ export default function LoginPage() {
     }
   };
 
+  const isCurrentSuper = email === "superadmin@emergent-hub.com";
   const isCurrentAdmin = email === "admin@emergent-hub.com";
   const isCurrentExec = email === "executive@emergent-hub.com";
 
@@ -75,37 +79,53 @@ export default function LoginPage() {
           <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2 block">
             Select Role to Test:
           </label>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              type="button"
+              onClick={() => selectRolePreset("SUPERADMIN")}
+              className={`p-2 rounded-xl border text-left transition-all ${
+                isCurrentSuper
+                  ? "bg-amber-50 border-amber-300 text-amber-900 shadow-xs ring-2 ring-amber-500/20"
+                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              <div className="flex items-center gap-1 text-[11px] font-extrabold text-amber-900">
+                <Shield className="w-3.5 h-3.5 text-amber-600" />
+                <span>SuperAdmin</span>
+              </div>
+              <div className="text-[9px] text-slate-500 mt-0.5 leading-tight">Supreme Control</div>
+            </button>
+
             <button
               type="button"
               onClick={() => selectRolePreset("ADMIN")}
-              className={`p-2.5 rounded-xl border text-left transition-all ${
+              className={`p-2 rounded-xl border text-left transition-all ${
                 isCurrentAdmin
                   ? "bg-purple-50 border-purple-300 text-purple-900 shadow-xs ring-2 ring-purple-500/20"
                   : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
               }`}
             >
-              <div className="flex items-center gap-1.5 text-xs font-bold">
+              <div className="flex items-center gap-1 text-[11px] font-bold text-purple-900">
                 <Shield className="w-3.5 h-3.5 text-purple-600" />
                 <span>Admin</span>
               </div>
-              <div className="text-[10px] text-slate-500 mt-0.5">Video & Full Control</div>
+              <div className="text-[9px] text-slate-500 mt-0.5 leading-tight">Video & Full Control</div>
             </button>
 
             <button
               type="button"
               onClick={() => selectRolePreset("EXECUTIVE")}
-              className={`p-2.5 rounded-xl border text-left transition-all ${
+              className={`p-2 rounded-xl border text-left transition-all ${
                 isCurrentExec
                   ? "bg-blue-50 border-blue-300 text-blue-900 shadow-xs ring-2 ring-blue-500/20"
                   : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
               }`}
             >
-              <div className="flex items-center gap-1.5 text-xs font-bold">
+              <div className="flex items-center gap-1 text-[11px] font-bold text-blue-900">
                 <UserCheck className="w-3.5 h-3.5 text-blue-600" />
                 <span>Executive</span>
               </div>
-              <div className="text-[10px] text-slate-500 mt-0.5">Account Registration</div>
+              <div className="text-[9px] text-slate-500 mt-0.5 leading-tight">Fleet Registration</div>
             </button>
           </div>
         </div>

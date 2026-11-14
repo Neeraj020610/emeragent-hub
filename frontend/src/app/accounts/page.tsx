@@ -619,24 +619,26 @@ function AccountsContent() {
       (a.email && a.email.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
-  // Strict Active Worker: Account must have a verified positive credit balance
-  // 1. Look for an explicitly CONNECTED/ACTIVE account with positive credits first
+  const MIN_USABLE_CREDITS = 5.0;
+
+  // Strict Active Worker: Account must have at least 5 usable credits
+  // 1. Look for an explicitly CONNECTED/ACTIVE account with >= 5 credits first
   const connectedCandidates = accounts
     .filter(
       (a) =>
         ((a.connection_status || "").toUpperCase() === "CONNECTED" || (a.connection_status || "").toUpperCase() === "ACTIVE") &&
         a.latest_credit_balance !== null &&
-        Number(a.latest_credit_balance) > 0
+        Number(a.latest_credit_balance) >= MIN_USABLE_CREDITS
     )
     .sort((a, b) => a.id - b.id);
 
-  // 2. If eligible positive-credit accounts are in STANDBY, promote the first FIFO account as the active worker!
+  // 2. If eligible >= 5 credit accounts are in STANDBY, promote the first FIFO account as the active worker!
   const standbyCandidates = accounts
     .filter(
       (a) =>
         (a.connection_status || "").toUpperCase() === "STANDBY" &&
         a.latest_credit_balance !== null &&
-        Number(a.latest_credit_balance) > 0
+        Number(a.latest_credit_balance) >= MIN_USABLE_CREDITS
     )
     .sort((a, b) => a.id - b.id);
 
@@ -644,14 +646,14 @@ function AccountsContent() {
     ? connectedCandidates[0].id
     : (standbyCandidates.length > 0 ? standbyCandidates[0].id : null);
 
-  // Standby Queue: other verified accounts with positive credits, ordered strictly FIFO by account.id
+  // Standby Queue: other verified accounts with >= 5 credits, ordered strictly FIFO by account.id
   const standbyAccounts = accounts
     .filter(
       (a) =>
         a.id !== activeWorkerId &&
         ((a.connection_status || "").toUpperCase() === "STANDBY" || (a.connection_status || "").toUpperCase() === "CONNECTED") &&
         a.latest_credit_balance !== null &&
-        Number(a.latest_credit_balance) > 0
+        Number(a.latest_credit_balance) >= MIN_USABLE_CREDITS
     )
     .sort((a, b) => a.id - b.id);
 
@@ -735,12 +737,18 @@ function AccountsContent() {
       );
     }
 
-    // 3. Credits Finished
-    if (s === "EXHAUSTED" || s === "CREDITS_FINISHED" || (acc.latest_credit_balance !== null && Number(acc.latest_credit_balance) <= 0 && (s === "CONNECTED" || s === "STANDBY"))) {
+    // 3. Credits Finished / Inactive (< 5 Cr)
+    const bal = acc.latest_credit_balance !== null && acc.latest_credit_balance !== undefined ? Number(acc.latest_credit_balance) : null;
+    if (
+      s === "EXHAUSTED" ||
+      s === "CREDITS_FINISHED" ||
+      s === "INACTIVE" ||
+      (bal !== null && bal < MIN_USABLE_CREDITS && (s === "CONNECTED" || s === "STANDBY" || s === "ACTIVE"))
+    ) {
       return (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-rose-50 text-rose-800 border border-rose-200">
           <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-          Credits Finished
+          Inactive (&lt; 5 Cr)
         </span>
       );
     }
@@ -927,13 +935,19 @@ function AccountsContent() {
                     </td>
                     <td className="px-4 py-3 font-mono font-semibold text-slate-900">
                       {((acc.connection_status as string) === "CONNECTED" || (acc.connection_status as string) === "STANDBY" || (acc.connection_status as string) === "ACTIVE") &&
-                      acc.latest_credit_balance !== null && acc.latest_credit_balance !== undefined && Number(acc.latest_credit_balance) > 0 ? (
-                        <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-xs font-mono font-bold">
-                          {Number(acc.latest_credit_balance).toLocaleString()} Credits
-                        </span>
+                      acc.latest_credit_balance !== null && acc.latest_credit_balance !== undefined ? (
+                        Number(acc.latest_credit_balance) >= MIN_USABLE_CREDITS ? (
+                          <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-xs font-mono font-bold">
+                            {Number(acc.latest_credit_balance).toLocaleString()} Credits
+                          </span>
+                        ) : (
+                          <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 text-xs font-mono font-bold">
+                            {Number(acc.latest_credit_balance).toLocaleString()} Credits (Depleted &lt; 5 Cr)
+                          </span>
+                        )
                       ) : (acc.connection_status as string) === "EXHAUSTED" ? (
                         <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 text-xs font-sans">
-                          0 Credits (Finished)
+                          {acc.latest_credit_balance !== null ? `${Number(acc.latest_credit_balance).toLocaleString()} Cr (Depleted)` : "0 Credits (Finished)"}
                         </span>
                       ) : (acc.connection_status as string) === "CONNECTED" || (acc.connection_status as string) === "STANDBY" ? (
                         <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 text-xs font-sans">

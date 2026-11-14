@@ -311,7 +311,7 @@ class MultiAccountSessionManager:
     def check_user_account_access(self, db: Session, user: User, account: EmergentAccount, require_manage: bool = False) -> None:
         """Verifies RBAC and personal account consent isolation."""
         role_name = user.role.name if user.role else "MEMBER"
-        if role_name == "ADMIN":
+        if role_name in ("ADMIN", "SUPERADMIN", "SUPER_ADMIN"):
             return
 
         if account.owner_user_id == user.id:
@@ -672,7 +672,7 @@ class MultiAccountSessionManager:
         role_name = current_user.role.name if current_user.role else "MEMBER"
         query = db.query(AccountSession).join(EmergentAccount)
 
-        if role_name != "ADMIN":
+        if role_name not in ("ADMIN", "SUPERADMIN", "SUPER_ADMIN"):
             permitted_ids = (
                 db.query(AccountPermission.account_id)
                 .filter(AccountPermission.user_id == current_user.id, AccountPermission.can_view == True)
@@ -701,7 +701,7 @@ class MultiAccountSessionManager:
         role_name = current_user.role.name if current_user.role else "MEMBER"
         query = db.query(AccountSession).join(EmergentAccount)
 
-        if role_name != "ADMIN":
+        if role_name not in ("ADMIN", "SUPERADMIN", "SUPER_ADMIN"):
             permitted_ids = (
                 db.query(AccountPermission.account_id)
                 .filter(AccountPermission.user_id == current_user.id, AccountPermission.can_view == True)

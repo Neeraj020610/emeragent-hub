@@ -91,6 +91,8 @@ export function AppShell({ children, noPadding = false }: AppShellProps) {
           const expired = sessions.find((s) => {
             if (s.account_id === activeLoginId) return false;
             if (s.session_status !== "EXPIRED" && s.session_status !== "SESSION_EXPIRED") return false;
+            const reasonLow = (s.reauth_reason || "").toLowerCase();
+            if (reasonLow.includes("exhausted") || reasonLow.includes("depleted") || reasonLow.includes("< 5 cr") || reasonLow.includes("credits")) return false;
             const key = `${s.account_id}:${s.updated_at || s.reauth_reason || "expired"}`;
             return !dismissedMap[key];
           });

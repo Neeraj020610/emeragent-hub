@@ -164,8 +164,14 @@ export function Topbar({ onToggleMobileMenu }: TopbarProps) {
               {session?.fullName || "Hub Administrator"}
             </div>
             <div className="text-[10px] text-slate-500 leading-tight flex items-center gap-1 mt-0.5">
-              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase tracking-wider bg-slate-800 text-white">
-                {session?.role || "ADMIN"}
+              <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase tracking-wider ${
+                session?.role === "SUPERADMIN"
+                  ? "bg-amber-600 text-white font-extrabold shadow-xs"
+                  : session?.role === "EXECUTIVE"
+                  ? "bg-blue-600 text-white"
+                  : "bg-slate-800 text-white"
+              }`}>
+                {session?.role === "SUPERADMIN" ? "👑 SUPER ADMIN" : session?.role || "ADMIN"}
               </span>
             </div>
           </div>

@@ -114,8 +114,8 @@ def list_accounts(
     user_role = current_user.role.name if current_user.role else "MEMBER"
     query = db.query(EmergentAccount)
 
-    if user_role == "ADMIN":
-        pass  # Admin accesses all accounts
+    if user_role in ("ADMIN", "SUPERADMIN", "SUPER_ADMIN"):
+        pass  # Admin / Super Admin accesses all accounts
     else:
         # Permitted accounts query
         permitted_ids = (
@@ -293,7 +293,7 @@ def get_account(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found.")
 
     user_role = current_user.role.name if current_user.role else "MEMBER"
-    if user_role != "ADMIN" and account.owner_user_id != current_user.id:
+    if user_role not in ("ADMIN", "SUPERADMIN", "SUPER_ADMIN") and account.owner_user_id != current_user.id:
         perm = (
             db.query(AccountPermission)
             .filter(
@@ -326,7 +326,7 @@ def update_account(
     is_owner = account.owner_user_id == current_user.id
 
     # Check permission
-    if user_role != "ADMIN" and not is_owner:
+    if user_role not in ("ADMIN", "SUPERADMIN", "SUPER_ADMIN") and not is_owner:
         perm = (
             db.query(AccountPermission)
             .filter(
@@ -340,7 +340,7 @@ def update_account(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Management permission required to update account.")
 
     # Members cannot modify ownership
-    if payload.ownership_type is not None and user_role not in ["ADMIN"] and not is_owner:
+    if payload.ownership_type is not None and user_role not in ("ADMIN", "SUPERADMIN", "SUPER_ADMIN") and not is_owner:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only account owner or Admin may change ownership type.")
 
     if payload.account_name is not None:
@@ -654,7 +654,7 @@ def assign_account_member(
 
     # Rule from Section 6: PERSONAL accounts require explicit account-owner authorization
     user_role = current_user.role.name if current_user.role else "MEMBER"
-    if account.ownership_type == "PERSONAL" and user_role != "ADMIN" and account.owner_user_id != current_user.id:
+    if account.ownership_type == "PERSONAL" and user_role not in ("ADMIN", "SUPERADMIN", "SUPER_ADMIN") and account.owner_user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Personal accounts require explicit authorization by the account owner to assign team members.",

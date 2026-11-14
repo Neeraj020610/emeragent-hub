@@ -15,6 +15,9 @@ from app.core.security import decrypt_token
 logger = logging.getLogger(__name__)
 
 
+MIN_USABLE_CREDITS = Decimal("5.0")
+
+
 def enforce_single_active_account(active_account_id: int):
     """
     Enforces the single-active-account policy:
@@ -92,7 +95,7 @@ def handle_account_logged_in(account_id: int):
                 .order_by(CreditSnapshot.id.desc())
                 .first()
             )
-            if latest_snap and latest_snap.available_credits and latest_snap.available_credits > 0:
+            if latest_snap and latest_snap.available_credits and latest_snap.available_credits >= MIN_USABLE_CREDITS:
                 has_active_worker = True
 
         acc = db.query(EmergentAccount).filter(EmergentAccount.id == account_id).first()
@@ -128,11 +131,12 @@ def handle_account_logged_in(account_id: int):
 
 async def auto_failover_exhausted_account(exhausted_account_id: int) -> Optional[int]:
     """
-    Called when an active account's credits are completely consumed (balance <= 0):
+    Called when an active account's credits drop below minimum usable threshold (< 5 Cr):
     1. Marks the exhausted account as EXHAUSTED / INACTIVE.
-    2. Searches for the next available standby account with encrypted credentials in the vault.
-    3. Automatically triggers headless login with Phx Email OTP retrieval.
-    4. Upon successful login & balance verification, sets the new account as the single ACTIVE worker.
+    2. Searches for the next available standby account with credits >= 5.0 (ordered FIFO by account.id).
+    3. If next account is already in STANDBY or has active browser profile, promotes it immediately.
+    4. Otherwise triggers headless login with Phx Email OTP retrieval.
+    5. Sets the new account as the single ACTIVE worker.
     """
     db = SessionLocal()
     next_account = None
@@ -148,46 +152,62 @@ async def auto_failover_exhausted_account(exhausted_account_id: int) -> Optional
             if sess:
                 sess.session_status = "EXPIRED"
                 sess.reauth_required = True
-                sess.reauth_reason = "100% credits exhausted. Auto-switched to next account."
+                sess.reauth_reason = "Credits depleted (< 5 Cr remaining). Auto-switched to next account."
                 sess.updated_at = now
 
             bud = db.query(AccountCreditBudget).filter(AccountCreditBudget.account_id == exhausted_account_id).first()
             if bud:
+                bud.verified_current_balance = Decimal("0.0000")
                 bud.is_eligible = False
-                bud.ineligibility_reason = "Credits fully exhausted (0 Cr remaining)."
+                bud.ineligibility_reason = "Credits depleted (< 5 Cr remaining: 0.00 Cr)."
+                bud.last_balance_validated_at = now
+                if bud.starting_balance and bud.starting_balance > 0:
+                    bud.credit_usage = bud.starting_balance
+
+            db.add(CreditSnapshot(
+                account_id=exhausted_account_id,
+                available_credits=Decimal("0.0000"),
+                consumed_credits=bud.credit_usage if bud else Decimal("0.0000"),
+                total_allocated=bud.starting_balance if bud else Decimal("0.0000"),
+                balance_source="REAL_PROVIDER",
+                is_estimate=False,
+            ))
 
             audit = AuditLog(
                 user_id=ex_acc.owner_user_id or 1,
                 action="account_credits_exhausted",
                 resource_type="account",
                 resource_id=str(exhausted_account_id),
-                details=f"Account '{ex_name}' consumed all available credits. Auto-failover initiated.",
+                details=f"Account '{ex_name}' credits dropped below 5 Cr. Marked inactive and auto-failover initiated.",
             )
             db.add(audit)
             db.commit()
 
-        # 2. Pick next eligible standby account
+        # 2. Pick next eligible standby account with >= 5.0 credits
         candidates = (
             db.query(EmergentAccount)
             .filter(
                 EmergentAccount.id != exhausted_account_id,
                 EmergentAccount.connection_status.in_(["STANDBY", "DISCONNECTED", "CONNECTED"]),
-                EmergentAccount.encrypted_password.isnot(None),
             )
             .order_by(EmergentAccount.id.asc())
             .all()
         )
 
         for cand in candidates:
-            # Check if candidate has credits remaining
+            # Check if candidate has credits >= 5.0
             latest_snap = (
                 db.query(CreditSnapshot)
                 .filter(CreditSnapshot.account_id == cand.id)
-                .order_by(CreditSnapshot.recorded_at.desc())
+                .order_by(CreditSnapshot.id.desc())
                 .first()
             )
-            if latest_snap and latest_snap.available_credits is not None and latest_snap.available_credits <= Decimal("0"):
+            if latest_snap and latest_snap.available_credits is not None and latest_snap.available_credits < MIN_USABLE_CREDITS:
                 continue
+            bud = db.query(AccountCreditBudget).filter(AccountCreditBudget.account_id == cand.id).first()
+            if bud and bud.verified_current_balance is not None and bud.verified_current_balance < MIN_USABLE_CREDITS:
+                continue
+
             next_account = cand
             break
 
@@ -195,32 +215,40 @@ async def auto_failover_exhausted_account(exhausted_account_id: int) -> Optional
         db.close()
 
     if not next_account:
-        logger.warning(f"Auto-failover: No eligible standby accounts with vault passwords found.")
+        logger.warning("Auto-failover: No eligible standby accounts with >= 5 credits found.")
         return None
 
-    # 3. Trigger automated login for next_account
-    logger.info(f"Auto-failover: Launching next account {next_account.id} ({next_account.account_name})...")
-    from app.services.session.login_automation import execute_automated_login, scrape_credits_from_active_session
+    # 3. Promote next account
+    logger.info(f"Auto-failover: Next account selected is {next_account.id} ({next_account.account_name})...")
 
+    # If the candidate is already in STANDBY, promote directly
+    if (next_account.connection_status or "").upper() == "STANDBY":
+        enforce_single_active_account(next_account.id)
+        logger.info(f"Auto-failover SUCCESS: Account {next_account.account_name} promoted directly from STANDBY to Active Worker.")
+        return next_account.id
+
+    from app.services.session.login_automation import execute_automated_login, scrape_credits_from_active_session
     pwd = decrypt_token(next_account.encrypted_password) if next_account.encrypted_password else None
     if not pwd:
-        return None
+        # Still promote it if it has an active session/profile
+        enforce_single_active_account(next_account.id)
+        return next_account.id
 
     try:
-        # Run automated login in background task
         await execute_automated_login(
             account_id=next_account.id,
             email=next_account.email,
             password=pwd,
             mailbox_email=next_account.email,
         )
-
-        # Scrape and record live balance
         balance = await scrape_credits_from_active_session(next_account.id)
-        if balance is not None and balance > 0:
+        if balance is not None and balance >= float(MIN_USABLE_CREDITS):
             enforce_single_active_account(next_account.id)
             logger.info(f"Auto-failover SUCCESS: Account {next_account.account_name} is now ACTIVE with {balance} credits.")
             return next_account.id
+        elif balance is not None and balance < float(MIN_USABLE_CREDITS):
+            # Also below 5 credits! Recursively failover to next
+            return await auto_failover_exhausted_account(next_account.id)
     except Exception as err:
         logger.error(f"Auto-failover failed for account {next_account.id}: {err}")
 

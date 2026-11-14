@@ -104,6 +104,23 @@ async def _scrape_and_record_credits(page: Page, account_id: int):
         await asyncio.sleep(1.5)
         found_credits = None
 
+        # 0. Check for "Purchase Credits" / "Buy Now" modal (Indicates credits are 100% depleted to 0.00)
+        try:
+            for m_sel in [
+                "h2:has-text('Purchase Credits')",
+                "div:has-text('Purchase Credits'):visible",
+                "button:has-text('Upgrade to Standard'):visible",
+                "button:has-text('Buy Now'):visible",
+                "[role='dialog']:has-text('Purchase Credits')",
+                "[role='dialog']:has-text('Buy Now')",
+            ]:
+                if await page.locator(m_sel).first.is_visible(timeout=250):
+                    found_credits = Decimal("0.0000")
+                    logger.info(f"Purchase Credits modal detected on account {account_id} -> Recorded 0.00 Cr.")
+                    break
+        except Exception:
+            pass
+
         # 1. Dismiss any welcome dialogs or coachmarks
         for _ in range(2):
             try:
@@ -119,6 +136,19 @@ async def _scrape_and_record_credits(page: Page, account_id: int):
                 await asyncio.sleep(0.5)
         except Exception:
             pass
+
+        # 0. Check Studio Composer bottom bar / pill (e.g. "30.77 credits remaining" or "20.77 credits remaining")
+        try:
+            studio_badge = page.locator("*:has-text('credits remaining')").first
+            if await studio_badge.is_visible(timeout=800):
+                txt = (await studio_badge.inner_text() or "").strip()
+                m_st = re.search(r'(\d+(?:\.\d+)?)\s*credits', txt, re.I)
+                if m_st:
+                    val = float(m_st.group(1))
+                    if val >= 0:
+                        found_credits = Decimal(str(val))
+        except Exception as e:
+            logger.debug(f"Studio composer credit note: {e}")
 
         # 1. Primary: Direct Emergent Header Credit Pill (v3/v2 exact decimal balance, e.g. "157.95")
         try:
@@ -255,8 +285,8 @@ async def _scrape_and_record_credits(page: Page, account_id: int):
                     budget.ceiling_percentage = Decimal("100.00")
                     budget.balance_source = "REAL_PROVIDER"
                     budget.last_balance_validated_at = datetime.now(timezone.utc)
-                    budget.is_eligible = (found_credits > Decimal("0"))
-                    budget.ineligibility_reason = None if found_credits > Decimal("0") else "Credits Exhausted (0 Cr)"
+                    budget.is_eligible = (found_credits >= Decimal("5.0"))
+                    budget.ineligibility_reason = None if found_credits >= Decimal("5.0") else f"Credits Depleted (< 5 Cr: {found_credits} Cr)"
                 else:
                     initial_start = Decimal("50.0000") if found_credits <= Decimal("50.0") else found_credits
                     initial_usage = max(Decimal("0.0000"), initial_start - found_credits)
@@ -269,12 +299,19 @@ async def _scrape_and_record_credits(page: Page, account_id: int):
                         ceiling_percentage=Decimal("100.00"),
                         balance_source="REAL_PROVIDER",
                         last_balance_validated_at=datetime.now(timezone.utc),
-                        is_eligible=(found_credits > Decimal("0")),
-                        ineligibility_reason=None if found_credits > Decimal("0") else "Credits Exhausted (0 Cr)",
+                        is_eligible=(found_credits >= Decimal("5.0")),
+                        ineligibility_reason=None if found_credits >= Decimal("5.0") else f"Credits Depleted (< 5 Cr: {found_credits} Cr)",
                         universal_api_usage=Decimal("0.0000"),
                         platform_build_usage=initial_usage,
                     )
                     db.add(budget)
+
+                if found_credits < Decimal("5.0"):
+                    try:
+                        from app.services.session.failover_service import auto_failover_exhausted_account
+                        asyncio.create_task(auto_failover_exhausted_account(account_id))
+                    except Exception as ef:
+                        logger.warning(f"Failover trigger note on scrape: {ef}")
 
                 snap = CreditSnapshot(
                     account_id=account_id,
@@ -313,8 +350,10 @@ async def _scrape_and_record_credits(page: Page, account_id: int):
                 append_log(account_id, f"💰 Live credit balance detected & saved: {found_credits} credits")
             finally:
                 db.close()
+        return found_credits
     except Exception as e:
         logger.warning(f"Error scraping credits from Emergent: {e}")
+        return None
 
 
 def _mark_session_expired(account_id: int, reason: str = "Emergent browser session expired. Please Sign In again."):

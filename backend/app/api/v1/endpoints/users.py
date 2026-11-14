@@ -48,6 +48,16 @@ def create_user(
             detail=f"Role with ID '{payload.role_id}' does not exist.",
         )
 
+    cur_role = current_user.role.name.upper() if current_user.role else ""
+    target_role = role.name.upper()
+
+    # Supreme security: Only a Super Admin can create another Super Admin account
+    if target_role in ("SUPERADMIN", "SUPER_ADMIN") and cur_role not in ("SUPERADMIN", "SUPER_ADMIN"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Supreme Authority Restriction: Only an active Super Admin can create another Super Admin account.",
+        )
+
     new_user = User(
         email=payload.email.lower(),
         hashed_password=hash_password(payload.password),
@@ -85,6 +95,16 @@ def update_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
 
+    cur_role = current_user.role.name.upper() if current_user.role else ""
+    target_role = user.role.name.upper() if user.role else ""
+
+    # Supreme security: Standard Admins cannot modify or reset password of a Super Admin account
+    if target_role in ("SUPERADMIN", "SUPER_ADMIN") and cur_role not in ("SUPERADMIN", "SUPER_ADMIN"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Supreme Authority Restriction: Super Admin accounts can only be modified by another Super Admin.",
+        )
+
     if payload.email is not None:
         user.email = payload.email.lower()
     if payload.full_name is not None:
@@ -93,6 +113,13 @@ def update_user(
         role = db.query(Role).filter(Role.id == payload.role_id).first()
         if not role:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found.")
+        
+        # Only Super Admin can promote someone to Super Admin
+        if role.name.upper() in ("SUPERADMIN", "SUPER_ADMIN") and cur_role not in ("SUPERADMIN", "SUPER_ADMIN"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Supreme Authority Restriction: Only a Super Admin can promote accounts to Super Admin.",
+            )
         user.role_id = payload.role_id
     if payload.is_active is not None:
         user.is_active = payload.is_active
@@ -125,12 +152,36 @@ def delete_user(
     if current_user.id == user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot delete your own admin account.",
+            detail="Cannot delete your own user account.",
         )
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+
+    cur_role = current_user.role.name.upper() if current_user.role else ""
+    target_role = user.role.name.upper() if user.role else ""
+
+    # Supreme security check: Super Admin accounts can ONLY be deleted by another Super Admin
+    if target_role in ("SUPERADMIN", "SUPER_ADMIN"):
+        if cur_role not in ("SUPERADMIN", "SUPER_ADMIN"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Supreme Protection: Super Admin accounts have supreme authority and can ONLY be deleted by another Super Admin.",
+            )
+
+        # Platform integrity: At least one Super Admin must always remain
+        superadmin_count = (
+            db.query(User)
+            .join(Role)
+            .filter(Role.name.in_(["SUPERADMIN", "SUPER_ADMIN"]))
+            .count()
+        )
+        if superadmin_count <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Platform Protection: Cannot delete the last remaining Super Admin account. At least one Super Admin must remain on the platform.",
+            )
 
     deleted_email = user.email
     db.delete(user)
@@ -143,7 +194,7 @@ def delete_user(
         resource_id=str(user_id),
         user_id=current_user.id,
         ip_address=request.client.host if request.client else None,
-        details=f"Admin deleted user {deleted_email} (ID: {user_id})",
+        details=f"{cur_role} deleted user {deleted_email} (ID: {user_id})",
     )
 
     return {"status": "SUCCESS", "message": f"User {deleted_email} deleted successfully."}

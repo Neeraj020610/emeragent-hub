@@ -403,6 +403,18 @@ async def sync_account_credits(
             "available_credits": None,
             "message": "Emergent browser session has expired. Account marked as Login Required — please click Sign In / Re-auth.",
         }
+
+    # If balance dropped below 5 credits, trigger auto-failover to next account!
+    if balance < 5.0:
+        from app.services.session.failover_service import auto_failover_exhausted_account
+        await auto_failover_exhausted_account(account_id)
+        return {
+            "status": "DEPLETED",
+            "account_id": account_id,
+            "available_credits": balance,
+            "message": f"Credit balance is {balance} credits (< 5 Cr minimum). Account marked inactive and auto-switched to next standby account.",
+        }
+
     return {
         "status": "SUCCESS",
         "account_id": account_id,

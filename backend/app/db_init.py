@@ -14,6 +14,7 @@ from app.config import settings
 def init_db(db: Session, seed_demo: bool = False) -> None:
     # 1. Seed Roles
     roles_data = [
+        ("SUPERADMIN", "Supreme authority across all accounts, team members, and system configurations. Protected from deletion by non-super-admins.", "all:manage,superadmin:manage"),
         ("ADMIN", "Full platform access and management privileges", "all:manage"),
         ("EXECUTIVE", "Register and onboard fleet accounts, verify OTP, view fleet status", "accounts:register,accounts:view,otp:verify"),
         ("MANAGER", "Manage authorized accounts, projects, and jobs", "accounts:view,projects:manage,jobs:manage"),

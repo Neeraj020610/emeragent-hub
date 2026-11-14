@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -300,12 +301,14 @@ class AgentChatService:
         is_hinglish = self._is_hinglish(prompt)
 
         # 1. Explicit continuation of an unfinished task
-        is_action_confirmation = any(
-            phrase in prompt_lower for phrase in [
-                "do it", "pls do it", "please do it", "karo", "kardo", "run", "proceed",
-                "execute", "continue", "go ahead", "chalu", "shuru", "chalao", "advance", "finish"
-            ]
-        ) or prompt_lower in ("yes", "haan", "ha", "ok", "thik h", "thik hai", "ok bhai")
+        action_confirmation_phrases = {
+            "do it", "pls do it", "please do it", "proceed", "execute", "continue",
+            "go ahead", "chalu karo", "shuru karo", "chalao", "advance", "finish it",
+            "yes", "haan", "ha", "ok", "thik h", "thik hai", "ok bhai", "done", "aage badho"
+        }
+        is_action_confirmation = prompt_lower in action_confirmation_phrases or bool(
+            re.search(r"\b(proceed with task|continue task|resume task|run task)\b", prompt_lower)
+        )
 
         if existing_task and existing_task.status in ("QUEUED", "CHECKPOINT", "PLANNED", "RUNNING") and is_action_confirmation:
             if existing_task.status == "PLANNED":
@@ -364,6 +367,55 @@ class AgentChatService:
             prompt_for_build = prompt
             regenerated_note = ""
 
+        # Clean conversational filler prefixes from the prompt so Emergent receives a clean instruction
+        clean_prompt = prompt_for_build.strip()
+        lower_prompt = clean_prompt.lower()
+        filler_prefixes = [
+            "thik h to ek asa video bnao jisme",
+            "theek hai to ek aisa video banao jisme",
+            "thik h to",
+            "theek hai to",
+            "chalo ab",
+            "ek kaam karo",
+            "yr ",
+            "yar ",
+            "bhai ",
+        ]
+        for fp in filler_prefixes:
+            if lower_prompt.startswith(fp):
+                clean_prompt = clean_prompt[len(fp):].strip(" ,:-")
+                break
+
+        # Only pull past user context if current prompt is a bare trigger with no subject (e.g., "banao", "create it")
+        is_bare_trigger = len(prompt.strip().split()) <= 3 and any(
+            w in prompt.lower().split() for w in ["banao", "bana", "kar", "karo", "do", "make", "create", "start", "generate", "haan"]
+        )
+        if intent_mode == "BUILD_TASK" and work_type == "VIDEO_CREATION" and is_bare_trigger:
+            past_user_msgs = (
+                db.query(ConversationMessage)
+                .filter(
+                    ConversationMessage.conversation_id == conversation.id,
+                    ConversationMessage.sender_type == "USER",
+                    ConversationMessage.id != user_msg.id,
+                )
+                .order_by(ConversationMessage.created_at.desc())
+                .limit(4)
+                .all()
+            )
+            for m in past_user_msgs:
+                m_norm = m.content.strip()
+                if any(k in m_norm.lower() for k in ["scene", "seen", "story", "jisme", "character", "fighting", "video"]):
+                    clean_prompt = m_norm
+                    logger.info(f"Synthesized bare build trigger with previous story context: {clean_prompt[:100]}")
+                    break
+
+        # Enforce single video generation if user requested 1 video ("ek video", "1 video", "single video")
+        if work_type == "VIDEO_CREATION":
+            if any(k in prompt.lower() for k in ["ek video", "1 video", "single video", "sirf ek", "ek hi"]):
+                clean_prompt = f"{clean_prompt} (Single continuous scene / 1 video only, do not generate multiple scenes or multi-part versions)"
+
+        prompt_for_build = clean_prompt
+
         if intent_mode == "CONVERSATION":
             convo_reply = self._generate_conversational_reply(
                 conversation=conversation,
@@ -397,13 +449,14 @@ class AgentChatService:
 
         if not account_selection:
             msg_text = (
-                f"**{plan_spec['title']}** start nahi ho paya kyunki abhi koi Emergent account eligible nahi hai "
-                f"(ya to 50% credit limit reach ho chuki hai ya session verify nahi hai).\n\n"
-                f"Aap **Sessions** ya **Autonomous** tab me jakar account reconnect/verify kar sakte hain."
+                f"**{plan_spec['title']}** start nahi ho paya kyunki abhi koi eligible Emergent account available nahi hai "
+                f"(ya to sabhi accounts ke usable credits khatam ho chuke hain ya sessions active nahi hain).\n\n"
+                f"Aap **Accounts** tab me jakar naya account add kar sakte hain ya existing account re-auth kar sakte hain."
                 if is_hinglish
                 else
-                f"I prepared the plan for **{plan_spec['title']}**, but no Emergent account is currently eligible under the 50% credit ceiling or active session checks.\n\n"
-                f"Please verify an account session in **Sessions** or **Autonomous** before running this build."
+                f"I prepared the plan for **{plan_spec['title']}**, but no Emergent account is currently eligible "
+                f"(accounts may be depleted < 5 Cr or sessions require re-authentication).\n\n"
+                f"Please check your active fleet in **Accounts** before running this build."
             )
             agent_reply = ConversationMessage(
                 conversation_id=conversation.id,
@@ -487,14 +540,14 @@ class AgentChatService:
             response_content = regenerated_note + (
                 f"Maine aapke connected Emergent account **`{selected_account.account_name}`** (`app.emergent.sh`) par **Real {'Video Agent' if work_type == 'VIDEO_CREATION' else 'Builder'}** start kar diya hai!\n\n"
                 f"- **Prompt**: `{prompt_for_build[:180]}`\n"
-                f"- **Account Balance (100% Full Usage)**: `{remaining_headroom:.2f}` credits\n"
+                f"- **Available Balance (Kharch ke liye bacha balance)**: `{remaining_headroom:.2f}` credits\n"
                 f"- **Task ID**: `{task.task_identifier}` (`IN_PROGRESS`)\n\n"
                 "Emergent Chrome window me video/build tayyar ho raha hai — aap **Live Emergent Preview** niche **View Generated Deliverables & Script** me dekh sakte hain. Complete hote hi downloadable output yahin update ho jayega!"
                 if is_hinglish
                 else
                 f"Started **Real Emergent {'Video Agent' if work_type == 'VIDEO_CREATION' else 'App Builder'}** on **`{selected_account.account_name}`** (`app.emergent.sh`)!\n\n"
                 f"- **Task ID**: `{task.task_identifier}` (`IN_PROGRESS`)\n"
-                f"- **Account Balance (100% Full Usage)**: `{remaining_headroom:.2f}` credits\n\n"
+                f"- **Available Account Balance**: `{remaining_headroom:.2f}` credits\n\n"
                 "Emergent is generating your deliverable in the authenticated Chrome profile. Live progress and the finished `.mp4` / workspace link will update right here automatically once ready."
             )
         else:
@@ -543,6 +596,9 @@ class AgentChatService:
             " kr ", " kro ", " karo ", " nhi ", " nahi ", " muje ", " mujhe ", " yar ", " yaar ",
             " bhai ", " yr ", " accha ", " acha ", " thik ", " batao ", " smj ", " dikhao ",
             " kharch ", " ky ", " haa ", " haan ", " isme ", " isko ", " chahiye ", " apna ",
+            " suno ", " sun ", " bol ", " bolta ", " bola ", " dekho ", " dikkat ", " gadbad ",
+            " bhi ", " bi ", " toh ", " to ", " ab ", " ye ", " yeh ", " wo ", " woh ",
+            " aise ", " karein ", " mera ", " meri ", " mere ", " hum ", " thos ", " battel ",
         ]
         return any(m in t for m in hinglish_markers)
 
@@ -561,58 +617,93 @@ class AgentChatService:
     ) -> Tuple[str, str]:
         """Returns (intent_mode, work_type) where intent_mode in ('CONVERSATION', 'BUILD_TASK', 'REGENERATE_LAST')."""
         norm = normalize_prompt_text(text).lower().strip()
+        norm_no_punct = re.sub(r"[^\w\s]", " ", norm).strip()
+        words = norm_no_punct.split()
 
-        # Check explicit feedback wanting a remake / fix of previous build
-        regen_phrases = [
-            "regenerate", "remake", "dobara", "phir se", "better bnao", "better karo", "improve this",
-            "change kro", "change karo", "ye kya bna", "maza nhi", "text likh", "fix video", "upgrade video"
+        # 1. Regeneration request for an existing video/build
+        regen_keywords = [
+            "regenerate", "remake", "dobara banao", "phir se banao", "better banao",
+            "improve this", "fix video", "upgrade video", "change karo video", "ye acchi nahi bani",
+            "ye kya bna", "maza nhi", "text likh diye"
         ]
-        if existing_task and any(p in norm for p in regen_phrases):
+        if existing_task and any(k in norm for k in regen_keywords):
             return "REGENERATE_LAST", existing_task.work_type
 
-        # Pure greetings, chitchat, questions, advice, brainstorming -> CONVERSATION
-        greeting_phrases = [
+        # 2. Complaint / Feedback / Bot behavior / "har baat pe video bana deta hai"
+        complaint_markers = [
+            "issue", "problem", "dikkat", "galti", "bug", "galat", "kharab", "gadbad",
+            "samajh nahi", "samajhta nahi", "samajhta hi nahi", "samajhta hi nhi",
+            "kuch samajh", "kuch samajh hi nahi", "kuch smj",
+            "reply dene ki", "reply dene ke", "reply nahi", "jawab nahi",
+            "video banna h", "video samajh", "har baat pe", "har bar video", "har baar video",
+            "kuch bhi bolta", "jo bhi bolta", "kuch bhi kaho", "kya karu iska", "ky kru iska",
+            "theek karo", "ye theek", "check karo", "kuch bi khts"
+        ]
+        if any(m in norm for m in complaint_markers):
+            return "CONVERSATION", "GENERAL"
+
+        # 3. Collaboration / Scene planning proposition ("ek ek karke scene bataunga", "pehle discuss karte hain")
+        collab_markers = [
+            "ek ek karke", "ek ek krke", "scene bataunga", "seen btaunga", "story bataunga", "kahani bataunga",
+            "pehle discuss", "pehle baat", "pehle script", "tum banate rehna", "tum bnate rhna",
+            "saath me banayenge", "sath me", "step by step story", "story sochi hai", "story bannai", "story banani"
+        ]
+        if any(m in norm for m in collab_markers):
+            return "CONVERSATION", "GENERAL"
+
+        # 4. User is giving a scene description ("Scene 1: ...", "Scene 2: ...", "Chapter 1: ...")
+        if re.search(r"\b(scene\s*\d+|seen\s*\d+|chapter\s*\d+|pehla\s*scene|dusra\s*scene|agla\s*scene)\b", norm):
+            # Unless user explicitly commands final rendering right now
+            if not any(v in norm for v in ["ab video bana", "final video bana", "video render karo", "create video now"]):
+                return "CONVERSATION", "GENERAL"
+
+        # 5. Questions / Inquiries (never auto-generate on questions)
+        question_starters = [
+            "kya", "kaise", "kse", "kyun", "kyu", "kaisa", "kaisi", "kaha", "kahan", "kab", "kitna", "kitne", "kitni",
+            "what", "how", "why", "where", "when", "which", "who", "can you", "could you", "is it", "will you",
+            "help", "status", "credit", "credits", "balance", "cost", "headroom"
+        ]
+        is_question = (
+            "?" in text
+            or (words and words[0] in question_starters)
+            or any(re.search(rf"\b{q}\b", norm) for q in ["kaise", "kyun", "kahan", "kitne", "how does", "what is", "where is"])
+        )
+        if is_question and not re.search(r"\b(ab video bana do|video create karo abhi|generate video now)\b", norm):
+            return "CONVERSATION", "GENERAL"
+
+        # 6. Greetings & Chitchat
+        greetings = [
             "hi", "hello", "hey", "hlo", "namaste", "good morning", "good evening",
             "kaise ho", "kya haal", "how are you", "who are you", "tum kaun ho",
-            "thanks", "thank you", "shukriya", "bye", "ok", "nice", "cool", "great", "good"
+            "thanks", "thank you", "shukriya", "bye", "ok", "nice", "cool", "great", "good",
+            "suno", "bhai", "yaar", "arre bhai"
         ]
-        if norm in greeting_phrases or (len(norm.split()) <= 4 and any(norm.startswith(g) for g in ["hi ", "hello ", "hey ", "kaise ", "kya haal", "thanks"])):
+        if norm_no_punct in greetings or (len(words) <= 3 and words[0] in ["hi", "hello", "hey", "kaise", "suno"]):
             return "CONVERSATION", "GENERAL"
 
-        # Action verbs requesting generation/building RIGHT NOW
-        build_action_verbs = [
-            "create", "make", "generate", "render", "build", "develop", "design", "produce", "banao", "bana do", "taiyar"
+        # 7. Action verbs explicitly requesting building/rendering RIGHT NOW
+        video_build_patterns = [
+            r"\b(?:video|vieo|vidio|vedio|vdo)\s+(?:banao|bnao|bana\s+do|bna\s+do|banayein|create|generate)\b",
+            r"\b(?:ek\s+)?(?:video|vieo|vidio|vedio|vdo)\s+(?:banao|bnao|bana|bna)\b",
+            r"\b(?:create\s+a\s+video|create\s+an\s+animated\s+video|create\s+video|generate\s+video|render\s+video|make\s+a\s+video|make\s+video)\b",
+            r"\b(?:ab\s+video\s+bana|final\s+video\s+bana|chalo\s+video\s+banao|video\s+render\s+karo)\b",
         ]
-        has_build_verb = any(v in norm.split() or v in norm for v in build_action_verbs)
+        has_video_build = any(re.search(p, norm) for p in video_build_patterns)
 
-        video_keywords = [
-            "video", "animation", "animated", "reel", "clip", "voiceover", "storyboard",
-            "short", "movie", "film", "trailer", "explainer"
+        web_build_patterns = [
+            r"\b(website\s+banao|web\s+app\s+banao|app\s+banao|dashboard\s+banao|landing\s+page\s+banao)\b",
+            r"\b(build\s+(?:a\s+)?(?:responsive\s+)?(?:website|web\s+app|app|dashboard|landing\s+page|portfolio|portal))\b",
+            r"\b(create\s+(?:a\s+)?(?:responsive\s+)?(?:website|web\s+app|app|dashboard|landing\s+page|portfolio|portal))\b",
+            r"\b(develop\s+(?:a\s+)?(?:website|app|web\s+app))\b",
         ]
-        web_keywords = [
-            "website", "app", "webapp", "landing", "dashboard", "portal", "webpage", "frontend", "ui", "site"
-        ]
+        has_web_build = any(re.search(p, norm) for p in web_build_patterns)
 
-        video_score = sum(1 for k in video_keywords if k in norm)
-        web_score = sum(1 for k in web_keywords if k in norm)
-
-        # If asking for ideas, explanation, status, or story writing in chat (without "create video/app")
-        conversational_queries = [
-            "idea", "ideas", "suggest", "suggestion", "kya kr skte", "what can you do", "help",
-            "balance", "credit", "credits", "headroom", "status", "check account", "audit",
-            "explain", "batao", "btaiye", "kya hai", "what is", "how does", "kaise kaam"
-        ]
-        if any(q in norm for q in conversational_queries) and video_score == 0 and web_score == 0:
-            return "CONVERSATION", "GENERAL"
-        if ("idea" in norm or "suggest" in norm) and "create" not in norm and "banao" not in norm:
-            return "CONVERSATION", "GENERAL"
-
-        if video_score > web_score and (has_build_verb or len(norm.split()) >= 3):
+        if has_video_build:
             return "BUILD_TASK", "VIDEO_CREATION"
-        if web_score >= video_score and web_score > 0 and (has_build_verb or len(norm.split()) >= 3):
+        if has_web_build:
             return "BUILD_TASK", "WEBSITE_APP_DEV"
 
-        # Otherwise treat as natural conversation!
+        # Default to natural conversation!
         return "CONVERSATION", "GENERAL"
 
     def _generate_conversational_reply(
@@ -626,92 +717,269 @@ class AgentChatService:
         """Generates an intelligent, contextual conversational response."""
         t = normalize_prompt_text(prompt).lower()
 
-        # 1. Greetings
-        if any(w in t for w in ["hi", "hello", "hey", "namaste", "kaise ho", "kya haal", "how are you"]):
+        # 1. Complaint / Misunderstanding / "Har baat pe video bana deta hai"
+        complaint_match = any(
+            m in t for m in [
+                "issue", "problem", "dikkat", "galti", "bug", "galat", "kharab", "gadbad",
+                "samajh nahi", "samajhta nahi", "samajhta hi nahi", "samajhta hi nhi",
+                "kuch samajh", "kuch samajh hi nahi", "kuch smj",
+                "reply dene ki", "reply dene ke", "reply nahi", "jawab nahi",
+                "video banna h", "video samajh", "har baat pe", "har bar video", "har baar video",
+                "kuch bhi bolta", "jo bhi bolta", "kuch bhi kaho", "kya karu iska", "ky kru iska",
+                "theek karo", "ye theek", "check karo", "kuch bi khts"
+            ]
+        )
+        if complaint_match:
             if is_hinglish:
                 return (
-                    "Hey! Main bilkul badhiya hoon, aap bataiye kaise hain? 😊\n\n"
-                    "Bataiye aaj kya banayein? Agar aapko **animated story video** chahiye (jaise *Ancient Indian Warrior*, *Space Odyssey*, ya koi business explainer), ya koi **interactive web app / dashboard**, bas topic bata dijiye — main poora script, visuals aur voiceover khud craft kar dunga."
+                    "Bhai main bilkul samajh gaya aapki baat, aur iske liye really sorry! 🙏\n\n"
+                    "Pehle system me ek issue tha ki koi bhi message aane par wo use seedha video order samajh leta tha aur normal reply dene ke bajay video generation start kar deta tha.\n\n"
+                    "**Maine ab iska logic poori tarah theek kar diya hai:**\n"
+                    "- 💬 **Normal Chat & Sawal**: Ab aap mujhse aaram se baat kar sakte hain, sawal pooch sakte hain ya story discuss kar sakte hain — main bilkul natural chat me jawab dunga.\n"
+                    "- 🚫 **Bina kahe koi video nahi**: Jab tak aap saaf-saaf nahi bolenge (jaise *\"Video banao\"* ya *\"Render karo\"*), tab tak **koi bhi video create nahi hogi**.\n"
+                    "- 🎬 **Scene-by-Scene Planning**: Agar aap ek-ek karke story ke scenes batayenge, to pehle hum scenes aur script discuss karenge, aur jab aap final *'OK'* bolenge tabhi video render karenge!\n\n"
+                    "Aap abhi mujhse kuch bhi baat karke test kar lijiye — ab koi unwanted video task shuru nahi hoga. Bataiye bhai, kya baat karni hai?"
                 )
             return (
-                "Hey there! Doing great and ready to help. 😊\n\n"
-                "We can brainstorm ideas, check your connected account credits, or create a custom **animated story video** or **interactive web app** from scratch. What's on your mind today?"
+                "I completely understand your frustration and I apologize! 🙏\n\n"
+                "Previously, the system had an overly aggressive trigger that interpreted every message as a video generation command rather than chatting naturally.\n\n"
+                "**This has now been completely fixed:**\n"
+                "- 💬 **Natural Chat**: You can converse, brainstorm, ask questions, or report issues freely.\n"
+                "- 🚫 **No Unwanted Builds**: Video or web builds will only run when you explicitly command them (e.g., *'Create a video about...'* or *'Video banao'*).\n"
+                "- 🎬 **Step-by-Step Story Planning**: We can discuss scenes and refine the story first before rendering.\n\n"
+                "Feel free to chat or test — no unwanted video tasks will trigger!"
             )
 
-        # 2. Capabilities / Help
-        if any(w in t for w in ["who are you", "tum kaun", "what can you do", "kya kr skte", "help"]):
+        # 2. Collaboration & Scene planning ("ek ek karke scene bataunga")
+        collab_match = any(
+            m in t for m in [
+                "ek ek karke", "ek ek krke", "scene bataunga", "seen btaunga", "story bataunga",
+                "kahani bataunga", "pehle discuss", "pehle baat", "pehle script", "tum banate rehna", "tum bnate rhna",
+                "saath me banayenge", "sath me", "step by step story", "story sochi hai", "story bannai", "story banani"
+            ]
+        )
+        if collab_match:
             if is_hinglish:
                 return (
-                    "Main aapka **Emergent Personal AI Agent** hoon. Main aapke liye kaafi cheezein kar sakta hoon:\n\n"
-                    "- **Custom Animated Videos**: Sirf topic bataiye (typos ki tension mat lijiye!), main story chapters, bespoke visuals aur spoken voiceover ke saath downloadable `.mp4` bana dunga.\n"
-                    "- **Websites & Dashboards**: Live Tailwind/HTML web apps build karke yahin preview & download ke liye ready kar dunga.\n"
-                    "- **Credit & Account Guard**: Har task aapke connected Emergent account ki **50% limit** ke andar safely run hota hai.\n\n"
-                    "Chaliye kuch try karein — kisi topic par video ya website suggest karoon?"
+                    "Arre bilkul bhai! Ye to bohot zabardast tarika hai! 🎬✨\n\n"
+                    "Aap ek-ek karke apne scenes batate jaaiye. Main har scene ko note karke uski script, camera visuals aur voiceover plan karta jaunga.\n\n"
+                    "Aur jab aapke saare scenes finalize ho jayein aur aap kahenge ki **\"Ab video bana do\"**, tabhi hum ek shaandar video render karenge!\n\n"
+                    "Chaliye shuru karte hain — **Scene 1** kaisa hona chahiye? Kis baare me hai story aur main character kaun hai?"
                 )
             return (
-                "I'm your **Emergent Personal AI Agent**. Here's what I can do for you right here:\n\n"
-                "- **Animated Videos**: Give me a theme or story prompt and I'll craft distinct chapters, custom artwork, voiceover narration, and a downloadable `.mp4`.\n"
-                "- **Web Apps & Dashboards**: I generate responsive standalone web apps with live preview.\n"
-                "- **Account & Credit Insights**: I automatically schedule work within your 50% credit ceiling.\n\n"
-                "Want to brainstorm a topic or build something now?"
+                "That's a fantastic idea! 🎬✨\n\n"
+                "Tell me your story scene by scene. I will structure each scene, refine the visual direction, and polish the voiceover narration.\n\n"
+                "Whenever you're happy with all the scenes and say **\"Create video now\"**, we'll render the final animation!\n\n"
+                "Let's start — what happens in **Scene 1**? Who is the main character and what is the setting?"
             )
 
-        # 3. Credit / Account status questions
-        if any(w in t for w in ["credit", "balance", "account", "headroom", "status", "audit"]):
+        # 3. Scene description submitted by user ("Scene 1: ...")
+        scene_match = re.search(r"\b(scene\s*\d+|seen\s*\d+|chapter\s*\d+|pehla\s*scene|dusra\s*scene|agla\s*scene)\b", t)
+        if scene_match:
+            scene_label = scene_match.group(0).upper()
+            if is_hinglish:
+                return (
+                    f"Bohot badhiya scene hai bhai! 🎬 Maine **{scene_label}** ko script me note kar liya hai.\n\n"
+                    f"- **Scene Concept**: {prompt.strip()}\n"
+                    f"- **Cinematic Details**: Strong visuals aur dramatic voiceover narration ke saath sync kiya jayega.\n\n"
+                    "Ab bataiye **Agla Scene** kaisa hona chahiye? Ya agar aap is story ki video abhi render karwana chahte hain to keh dijiye: *\"Ab is par video bana do\"*!"
+                )
+            return (
+                f"Great scene! 🎬 I've logged **{scene_label}** into our storyboard.\n\n"
+                f"- **Scene Concept**: {prompt.strip()}\n"
+                f"- **Cinematic Direction**: Synced illustrated visual pacing with dynamic voiceover.\n\n"
+                "What happens in the **Next Scene**? Or if you're ready to produce the video now, just say *\"Create video now\"*!"
+            )
+
+        # 4. Video Duration / Length / Seconds questions ("kitne sec ka video bana sakte ho?")
+        duration_patterns = [
+            r"\b(?:kitne|kitna|kitni)\s+(?:sec|second|seconds|minute|min|time|lamba|lambi|bada|badi)\b",
+            r"\b(?:duration|length|seconds|how\s+long|kitni\s+badi|kitna\s+bada)\b",
+            r"\b(?:kitne\s+se\s+ka|kitne\s+sec\s+ka|kitne\s+second\s+ka)\b",
+            r"\b(?:ek\s+bar\s+m|ek\s+baar\s+me)\s+(?:kitne|kitna)",
+            r"\b(?:lambi\s+video|lamba\s+video|video\s+ki\s+length|video\s+duration)\b",
+        ]
+        if any(re.search(p, t) or re.search(p, prompt.lower()) for p in duration_patterns):
+            if is_hinglish:
+                return (
+                    "Bhai hum ek baar me standard **10 seconds se lekar 60 seconds (1 minute)** tak ki high-quality animated video generate kar sakte hain! ⏱️🎬\n\n"
+                    "- ⚡ **10s – 20s**: Fast, punchy reel / teaser / action clip ke liye perfect rehta hai.\n"
+                    "- 📖 **30s – 60s**: Complete animated story jisme **3 se 5 illustrated chapters**, characters, visual battle/action aur synced voiceover narration hota hai.\n"
+                    "- 🎬 **Lambi Kahani (2 se 5+ minutes)**: Agar aapki story badi hai, to hum use **Part 1, Part 2, Part 3** (Episodes) me ek-ek karke connect karke bana sakte hain!\n\n"
+                    "Aap bataiye bhai, aap apni is animated story ke liye kitne seconds ki video plan kar rahe hain? Aur **Scene 1** ka prompt kya hai?"
+                )
+            return (
+                "We can generate videos typically ranging from **10 seconds to 60 seconds (1 minute)** in a single run! ⏱️🎬\n\n"
+                "- ⚡ **10s – 20s**: Great for snappy social clips, reels, and action teasers.\n"
+                "- 📖 **30s – 60s**: Full multi-chapter narrative arc with custom illustrated scenes, character dynamics, and synced voiceover.\n"
+                "- 🎬 **Longer Stories (2+ minutes)**: Can be produced sequentially as multi-part episodes (Part 1, Part 2, etc.)!\n\n"
+                "How many seconds are you aiming for with your current story concept? What's your prompt for **Scene 1**?"
+            )
+
+        # 5. Voiceover / Language / Audio questions ("hindi me bolega?", "voiceover kaisa hoga?")
+        voice_patterns = [
+            r"\b(?:voiceover|voice|narration|audio|sound|music|bgm|awaz|awaaz|bolne\s+wala)\b",
+            r"\b(?:hindi\s+me|english\s+me|hinglish\s+me)\b",
+        ]
+        if any(re.search(p, t) for p in voice_patterns):
+            if is_hinglish:
+                return (
+                    "Video me **high-quality voiceover narration** aur **cinematic background music** shamil hota hai! 🎙️🎵\n\n"
+                    "- **Languages**: English aur Hindi/Hinglish dono supported hain. Cinematic, dramatic superhero, ya emotional storytelling tone me narration set kar sakte hain.\n"
+                    "- **Captions/Subtitles**: Har scene ke sath matching on-screen subtitles bhi aate hain taaki dekhne wale ko poori kahani easily samajh aaye.\n\n"
+                    "Aapko apni story me kaisa voiceover style chahiye — heroic & intense ya calm storytelling?"
+                )
+            return (
+                "Our videos include **studio voiceover narration** and **cinematic background audio**! 🎙️🎵\n\n"
+                "- **Language**: Supports English and Hinglish narrative styles.\n"
+                "- **Subtitles**: On-screen subtitles are rendered to reinforce the narrative arc.\n\n"
+                "What tone of voiceover do you envision for your story?"
+            )
+
+        # 6. Quality / Animation Style / Resolution ("1080p", "3D ya 2D?")
+        style_patterns = [
+            r"\b(?:quality|resolution|1080p|4k|3d|2d|anime|graphics|style|kaisa\s+dikhega|visuals)\b"
+        ]
+        if any(re.search(p, t) for p in style_patterns):
+            if is_hinglish:
+                return (
+                    "Video **Full HD (1080p)** crystal-clear resolution me render hoti hai! 🎨✨\n\n"
+                    "- **Visual Style**: Cinematic digital illustration aur animated storyboard graphics (jaise Marvel/DC superhero, anime, realistic historical warrior, ya sci-fi fantasy).\n"
+                    "- **Format**: Universal MP4 format jise aap seedha WhatsApp, YouTube, Instagram Reels ya computer par play aur share kar sakte hain.\n\n"
+                    "Aapki story ke characters kis visual style me hone chahiye?"
+                )
+            return (
+                "Videos are delivered in **Full HD (1080p)** MP4 format! 🎨✨\n\n"
+                "- **Visual Style**: Cinematic illustrated storyboards (superhero, anime, historical fantasy, sci-fi concept art).\n"
+                "- **Format**: Standard H.264 MP4 with AAC audio, compatible across all devices and social platforms."
+            )
+
+        # 7. Workflow / How to write prompts ("scene by scene kaise likhu?")
+        process_patterns = [
+            r"\b(?:kaise\s+likhu|kaise\s+batau|kaise\s+bataun|prompt\s+kaise|tarika|process|format)\b"
+        ]
+        if any(re.search(p, t) for p in process_patterns):
+            if is_hinglish:
+                return (
+                    "Scene-by-scene batane ka process bohot simple aur aasan hai bhai! 📝\n\n"
+                    "Aap bas natural bhasha me likh kar bhej dijiye, jaise:\n"
+                    "- *Scene 1: Jungle me Iron Man aur Thanos aamne-saamne khade hain aur dono me confrontation hota hai...*\n"
+                    "- *Scene 2: Achanak ek naya villain un par hamla kar deta hai...*\n\n"
+                    "Main har scene ke visuals, camera angle aur voiceover note karta jaunga. Aur jab aap bolenge **\"Ab video bana do\"**, tab hum final video render kar denge!\n\n"
+                    "Bataiye, **Scene 1** me kya hota hai?"
+                )
+            return (
+                "Providing scenes is very simple! 📝\n\n"
+                "Just describe each scene naturally, e.g.:\n"
+                "- *Scene 1: Character introduction and setup...*\n"
+                "- *Scene 2: Conflict or climax...*\n\n"
+                "I will structure each scene's visuals and narration. Whenever you're ready, just say **\"Create video now\"** to render!\n\n"
+                "What happens in **Scene 1**?"
+            )
+
+        # 4. Credit / Account status questions
+        if any(w in t for w in ["credit", "balance", "account", "headroom", "status", "audit", "kharch", "kitne credit"]):
             accounts = db.query(EmergentAccount).all()
             lines = []
             for acc in accounts:
                 bud = db.query(AccountCreditBudget).filter(AccountCreditBudget.account_id == acc.id).first()
                 if bud:
                     rem = self._compute_remaining_headroom(bud)
+                    ceiling_pct = int(bud.ceiling_percentage or 100)
                     lines.append(
-                        f"- **{acc.account_name}** (`{acc.connection_status}`): Balance `{float(bud.verified_current_balance):.2f}` credits | 50% Eligible Remaining: `{rem:.2f}`"
+                        f"- **{acc.account_name}** (`{acc.connection_status}`): Balance `{float(bud.verified_current_balance):.2f}` credits | 100% Usable: `{rem:.2f}`"
                     )
-            summary = "\n".join(lines) if lines else "- Abhi koi active budget record nahi mila."
-            if is_hinglish:
-                return f"Yeh raha aapke connected accounts ka live credit status:\n\n{summary}\n\nAgar chahein to main abhi kisi eligible account par naya build ya video task run kar sakta hoon!"
-            return f"Here is the live status of your connected Emergent accounts:\n\n{summary}\n\nLet me know if you'd like me to kick off a new video or web build on an eligible account."
-
-        # 4. Ideas / Suggestions / Story Discussion
-        if any(w in t for w in ["idea", "suggest", "story", "kahani", "warrior", "ancient", "topic"]):
+            summary = "\n".join(lines) if lines else "- Abhi koi active account record nahi mila."
             if is_hinglish:
                 return (
-                    "Bahut badhiya! Yahan kuch zabardast concepts hain jo hum abhi animated video ya web app ke roop me bana sakte hain:\n\n"
-                    "1. **\"Create an animated video of an Ancient Indian Warrior\"** — 3 dramatic chapters (Dawn of Honor, Battle with Talwar & Shield, Eternal Legacy) custom visuals ke saath.\n"
-                    "2. **\"Build a sleek AI Finance Tracker web app\"** — Live responsive UI aur interactive features ke saath.\n"
-                    "3. **\"Create an animated space odyssey video about Mars\"** — Starfield, ringed planet aur voiceover narration.\n\n"
-                    "Inme se koi pasand aaya, ya aapka apna koi naya idea hai?"
+                    f"Yeh raha aapke connected accounts ka live credit status:\n\n{summary}\n\n"
+                    "Sabhi accounts par **100% Open Limit** active hai — koi 50% restriction nahi hai, aap poore credits use kar sakte hain. "
+                    "Jaise hi kisi account me 5 se kam credits bachenge, system automatically agle standby account par switch kar lega."
                 )
             return (
-                "Here are a few creative concepts we can build right away:\n\n"
-                "1. **Animated Historical Story**: *\"Create an animated video of an Ancient Indian Warrior\"* — 3 illustrated chapters with custom sword & fort artwork and voiceover.\n"
-                "2. **Sci-Fi Mini Film**: *\"Create a space odyssey video exploring Mars\"* — cosmic visuals and narration.\n"
-                "3. **Interactive Web App**: *\"Build a clean SaaS analytics dashboard\"* — standalone live HTML experience.\n\n"
-                "Which direction sounds best to you?"
+                f"Here is the live status of your connected Emergent accounts:\n\n{summary}\n\n"
+                "All accounts have a **100% Open Limit** enabled (full balance available for usage with zero 50% restriction). "
+                "Whenever an account drops below 5 credits, it automatically fails over to the next standby account in FIFO order."
             )
 
-        # 5. Follow-up referencing existing task
-        if existing_task:
+        # 5. Video download / where is the video / "Video kahan hai"
+        if any(w in t for w in ["download", "kahan hai", "kaha h", "kahan milegi", "file", "play", "where is", "deliverable"]):
+            if is_hinglish:
+                return (
+                    "Jab bhi koi video create hoti hai, to chat me us message ke theek niche ek button show hota hai: **\"View Generated Deliverables & Script\"**.\n\n"
+                    "- Us button par click karne se video player khul jata hai jahan aap video play karke dekh sakte hain.\n"
+                    "- Player ke theek upar **Download .MP4** button hota hai, jisse aap video direct apne computer/phone me download kar sakte hain.\n"
+                    "- Script aur scene-by-scene storyboard bhi usi drawer me display hota hai."
+                )
+            return (
+                "Whenever a video or app is generated, click the **\"View Generated Deliverables & Script\"** button right below that message in chat.\n\n"
+                "- It opens the built-in media viewer with interactive video playback.\n"
+                "- Click the **Download .MP4** button to save the file locally.\n"
+                "- The complete storyboard, timestamps, and voiceover text are also available in that drawer."
+            )
+
+        # 6. Greetings & Chitchat
+        if any(w in t for w in ["hi", "hello", "hey", "namaste", "kaise ho", "kya haal", "how are you", "suno", "bhai suno"]):
+            if is_hinglish:
+                return (
+                    "Hey bhai! Main bilkul badhiya hoon, aap bataiye kaise hain? 😊\n\n"
+                    "Aap mujhse koi bhi baat kar sakte hain, sawal pooch sakte hain ya koi creative story discuss kar sakte hain. "
+                    "Aur jab aap chahein, tab hum custom **animated story videos** ya **interactive web apps** bhi bana sakte hain.\n\n"
+                    "Bataiye aaj kya discuss karein?"
+                )
+            return (
+                "Hey there! Doing great and ready to help. 😊\n\n"
+                "We can chat, brainstorm ideas, check connected account credits, or plan a custom animated video/web app. What's on your mind today?"
+            )
+
+        # 7. Capabilities / Help
+        if any(w in t for w in ["who are you", "tum kaun", "what can you do", "kya kr skte", "kya kar sakte", "help"]):
+            if is_hinglish:
+                return (
+                    "Main aapka **Emergent Personal AI Assistant** hoon! Main aapke liye yeh sab kar sakta hoon:\n\n"
+                    "1. 💬 **Natural Chat & Story Planning**: Kisi bhi topic par baat karein, script likhein, ya ek-ek karke scene plan karein.\n"
+                    "2. 🎬 **Custom Animated Videos**: Jab aap kahenge (*'Video banao'*), to chapters, cinematic visuals aur voiceover ke saath downloadable `.mp4` video bana dunga.\n"
+                    "3. 🌐 **Websites & Web Apps**: Responsive Tailwind/HTML web apps generate karke live preview aur code provide karunga.\n"
+                    "4. 🛡️ **Multi-Account Credit Guard**: Aapke connected Emergent accounts par credits ko 100% open limit aur auto-failover ke saath manage karta hoon.\n\n"
+                    "Bataiye, abhi kisi story par baat karein ya kuch aur help chahiye?"
+                )
+            return (
+                "I am your **Emergent Personal AI Assistant**. Here is what I can do:\n\n"
+                "1. 💬 **Conversational Partner & Story Planner**: Brainstorm ideas, write scripts, and plan scenes.\n"
+                "2. 🎬 **Animated Video Creation**: When commanded (*'Create video'*), renders illustrated chapters, synced voiceover narration, and an MP4 deliverable.\n"
+                "3. 🌐 **Web & Dashboard Generation**: Builds standalone responsive web experiences with live interactive previews.\n"
+                "4. 🛡️ **Account & Credit Protection**: Schedules tasks safely across connected Emergent accounts under a 100% open limit with automated failover.\n\n"
+                "What would you like to explore today?"
+            )
+
+        # 8. Follow-up referencing existing task ONLY IF explicitly asked
+        if existing_task and any(w in t for w in ["pichhla video", "previous video", "purana video", "last video", "last task", "jo video banaya", "pichhli build"]):
             clean_subj = extract_clean_topic(existing_task.title, existing_task.description or "")
             if is_hinglish:
                 return (
-                    f"Haan bilkul! Hamari pichhli build **\"{clean_subj}\"** (`{existing_task.task_identifier}`, status: **{existing_task.status}**) ready hai.\n\n"
-                    "Agar aapko isme kuch change karna hai (jaise narration style, naya chapter, ya bilkul naya version regenerate karna), to bas bataiye — ya koi naya video/website topic dijiye!"
+                    f"Aapki pichhli video build **\"{clean_subj}\"** (`{existing_task.task_identifier}`) ka status **{existing_task.status}** hai.\n\n"
+                    "- Niche message ke **View Generated Deliverables & Script** button par click karke aap video dekh ya download kar sakte hain.\n"
+                    "- Agar aapko isme koi changes chahiye ya naya version regenerate karna hai, to bataiye!"
                 )
             return (
-                f"Got it! Your latest build **\"{clean_subj}\"** (`{existing_task.task_identifier}`, status: **{existing_task.status}**) is saved.\n\n"
-                "Tell me what you'd like to tweak or regenerate, or share a brand-new topic for a video or web app!"
+                f"Your previous build **\"{clean_subj}\"** (`{existing_task.task_identifier}`) is currently in status **{existing_task.status}**.\n\n"
+                "- Click **View Generated Deliverables & Script** below its message to watch or download.\n"
+                "- Let me know if you'd like to adjust scenes or regenerate an upgraded version."
             )
 
-        # 6. General friendly conversational fallback
+        # 9. General friendly conversational fallback
         if is_hinglish:
             return (
-                f"Samajh gaya! Agar aap **\"{prompt.strip()}\"** par ek **animated story video** ya **interactive webpage** banana chahte hain, "
-                "to bas itna bol dijiye: *\"Is par animated video banao\"* ya *\"Iske liye website banao\"* — main turant clean chapters, art aur voiceover ke saath taiyar kar dunga."
+                "Samajh gaya bhai! Main aapki baat dhyan se sun raha hoon.\n\n"
+                "- Agar aap koi specific story, characters ya scene discuss karna chahte hain to batayein, hum script plan karenge.\n"
+                "- Agar platform ya account ke baare me koi sawal hai to bejhijhak poochiye.\n"
+                "- Aur jab aapko video render karwani ho, bas keh dijiyega: *\"Is par video bana do\"*, tabhi hum video start karenge! 😊"
             )
         return (
-            f"Interesting! If you'd like me to turn **\"{prompt.strip()}\"** into a full **animated video** or an **interactive web app**, "
-            "just tell me to create a video or build a webpage on it and I'll generate the complete deliverable for you."
+            "Understood! I'm listening.\n\n"
+            "- If you'd like to brainstorm story scenes or outlines, feel free to share.\n"
+            "- If you have questions about accounts, credits, or features, just ask.\n"
+            "- And whenever you want to produce a video, simply say: *'Create a video on this'*! 😊"
         )
 
     def _format_completion_reply(

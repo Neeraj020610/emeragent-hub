@@ -53,6 +53,7 @@ _TYPO_MAP = {
     "animaed": "animated",
     "animetion": "animation",
     "vidio": "video",
+    "vieo": "video",
     "vedio": "video",
     "vdo": "video",
     "indin": "indian",

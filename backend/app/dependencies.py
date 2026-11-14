@@ -44,10 +44,13 @@ def get_current_user(
 def require_role(allowed_roles: List[str]):
     """
     Enforces Role-Based Access Control (RBAC).
-    Allowed roles can be ADMIN, MANAGER, MEMBER.
+    Allowed roles can be ADMIN, MANAGER, MEMBER, EXECUTIVE.
+    SUPERADMIN has supreme authority across all administrative endpoints.
     """
     def role_checker(current_user: User = Depends(get_current_user)) -> User:
-        user_role_name = current_user.role.name if current_user.role else ""
+        user_role_name = current_user.role.name.upper() if current_user.role else ""
+        if user_role_name in ("SUPERADMIN", "SUPER_ADMIN"):
+            return current_user
         if user_role_name not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

@@ -48,7 +48,7 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
     setSessionState(getSession());
   }, []);
 
-  const isAdmin = session?.role === "ADMIN";
+  const isAdmin = session?.role === "ADMIN" || session?.role === "SUPERADMIN";
 
   const navItemsToRender: NavItem[] = [
     ...navItems,
@@ -58,8 +58,10 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
             name: "Users & Team",
             href: "/team",
             icon: Users,
-            badge: "ADMIN",
-            badgeColor: "bg-purple-900/40 text-purple-300 border-purple-700/50",
+            badge: session?.role === "SUPERADMIN" ? "SUPER" : "ADMIN",
+            badgeColor: session?.role === "SUPERADMIN" 
+              ? "bg-amber-900/40 text-amber-300 border-amber-700/50"
+              : "bg-purple-900/40 text-purple-300 border-purple-700/50",
           },
         ]
       : []),
@@ -153,7 +155,9 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
         <div className="flex items-center justify-between p-2 rounded-xl bg-slate-900/80 border border-slate-800">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs shrink-0 ${
-              session?.role === "EXECUTIVE"
+              session?.role === "SUPERADMIN"
+                ? "bg-amber-500/20 border border-amber-500/50 text-amber-300"
+                : session?.role === "EXECUTIVE"
                 ? "bg-blue-600/20 border border-blue-500/40 text-blue-400"
                 : "bg-purple-600/20 border border-purple-500/40 text-purple-400"
             }`}>
@@ -161,15 +165,17 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-xs font-semibold text-white truncate leading-tight">
-                {session?.fullName || (session?.role === "EXECUTIVE" ? "Fleet Operations Executive" : "Hub Administrator")}
+                {session?.fullName || (session?.role === "SUPERADMIN" ? "Super Administrator" : session?.role === "EXECUTIVE" ? "Fleet Operations Executive" : "Hub Administrator")}
               </div>
               <div className="text-[10px] text-slate-400 truncate flex items-center gap-1.5 mt-0.5">
                 <span className={`px-1.5 py-0.2 rounded font-semibold text-[9px] ${
-                  session?.role === "EXECUTIVE"
+                  session?.role === "SUPERADMIN"
+                    ? "bg-amber-950 text-amber-300 border border-amber-600/60"
+                    : session?.role === "EXECUTIVE"
                     ? "bg-blue-950 text-blue-300 border border-blue-700/60"
                     : "bg-purple-950 text-purple-300 border border-purple-700/60"
                 }`}>
-                  {session?.role === "EXECUTIVE" ? "👤 EXECUTIVE" : "👑 ADMIN"}
+                  {session?.role === "SUPERADMIN" ? "👑 SUPER ADMIN" : session?.role === "EXECUTIVE" ? "👤 EXECUTIVE" : "👑 ADMIN"}
                 </span>
                 <span>•</span>
                 <span className="text-emerald-400 font-medium">Active</span>

@@ -145,9 +145,10 @@ class AccountCreditScheduler:
             budget.ineligibility_reason = f"Session is {session.session_status if session else 'MISSING'}"
             return False, budget.ineligibility_reason
 
-        if budget.verified_current_balance is not None and budget.verified_current_balance <= Decimal("0"):
+        MIN_USABLE_CREDITS = Decimal("5.0")
+        if budget.verified_current_balance is not None and budget.verified_current_balance < MIN_USABLE_CREDITS:
             budget.is_eligible = False
-            budget.ineligibility_reason = "Credits Exhausted (0 Cr)"
+            budget.ineligibility_reason = f"Credits depleted below minimum usable threshold (< 5 Cr: {budget.verified_current_balance} Cr)"
             return False, budget.ineligibility_reason
 
         if budget.active_task_id is not None and budget.active_task_id != current_task_id:
@@ -161,13 +162,13 @@ class AccountCreditScheduler:
                 # Clear orphaned task pointer
                 budget.active_task_id = None
 
-        # 100% Full Credit Pool Usage Check (Burn down to 0)
+        # 100% Full Credit Pool Usage Check (Burn down to 5 Cr minimum threshold)
         ceiling_limit = budget.starting_balance if budget.starting_balance > Decimal("0") else Decimal("999999.00")
         current_committed = budget.credit_usage + budget.reserved_credits
 
-        if budget.verified_current_balance is not None and budget.verified_current_balance <= Decimal("0"):
+        if budget.verified_current_balance is not None and budget.verified_current_balance < MIN_USABLE_CREDITS:
             budget.is_eligible = False
-            budget.ineligibility_reason = "Account credits fully exhausted (0 Cr remaining)."
+            budget.ineligibility_reason = f"Account credits below usable threshold (< 5 Cr remaining: {budget.verified_current_balance} Cr)."
             return False, budget.ineligibility_reason
 
         if current_committed >= ceiling_limit:
