@@ -349,7 +349,9 @@ class AgentChatService:
             return agent_msg
 
         # 2. Conversational AI handling vs Build/Video Execution Intent
-        intent_mode, work_type = self._classify_conversational_intent(prompt, existing_task)
+        intent_mode, work_type = self._classify_conversational_intent(
+            prompt, existing_task, conversation_id=conversation.id, db=db
+        )
 
         # Handle regeneration / improvement feedback ("ye kya bna diya", "text likh diye", "better banao", etc.)
         if intent_mode == "REGENERATE_LAST" and existing_task:
@@ -386,10 +388,34 @@ class AgentChatService:
                 clean_prompt = clean_prompt[len(fp):].strip(" ,:-")
                 break
 
-        # Only pull past user context if current prompt is a bare trigger with no subject (e.g., "banao", "create it")
-        is_bare_trigger = len(prompt.strip().split()) <= 3 and any(
-            w in prompt.lower().split() for w in ["banao", "bana", "kar", "karo", "do", "make", "create", "start", "generate", "haan"]
+        # Check if current prompt is a confirmation trigger or bare trigger with no topic (e.g., "ha ba do ab", "banao", "create it")
+        is_confirmation = (
+            any(
+                re.search(p, lower_prompt) for p in [
+                    r"\b(?:ha|haan|haa|han|yes|ok|okay|theek|thik|chalo|accha)\s+(?:ba\s+do|bana\s+do|bna\s+do|banao|bnao|kar\s+do|karo|kro|start|create|render)\b",
+                    r"\b(?:ba\s+do|bana\s+do|bna\s+do|banao|bnao|kar\s+do|kro)\s+(?:ab|abhi|bhai|yr|yaar|now)\b",
+                    r"^(?:ha|haan|han|yes)\s+(?:ba|bana|bna)\s+(?:do|doo)\b",
+                    r"\b(?:is\s+par\s+video\s+bana|ab\s+video\s+bana|bana\s+do\s+ab|bna\s+do\s+ab|banao\s+ab|bnao\s+ab)\b",
+                    r"^(?:banao|bnao|render|start|create\s+it|generate\s+it|shuru\s+karo)$",
+                ]
+            )
+            or lower_prompt in [
+                "ha ba do ab", "ha bna do ab", "haan bana do", "ha bana do", "bana do ab", "bna do ab",
+                "banao ab", "bnao ab", "chalo banao", "ha ba do", "haan bana do ab", "ha bana do ab",
+                "bana do", "bna do", "banao", "bnao", "kar do", "start", "render"
+            ]
         )
+        is_bare_trigger = is_confirmation or (
+            len(lower_prompt.split()) <= 6 and any(
+                w in lower_prompt.split() for w in [
+                    "banao", "bnao", "bana", "bna", "ba", "kar", "karo", "kro", "do", "doo", "make",
+                    "create", "creat", "start", "generate", "render", "haan", "ha", "yes", "ok"
+                ]
+            ) and not any(
+                k in lower_prompt for k in ["world war", "war", "car", "fight", "fighting", "dance", "iron man", "school", "office", "website"]
+            )
+        )
+
         if intent_mode == "BUILD_TASK" and work_type == "VIDEO_CREATION" and is_bare_trigger:
             past_user_msgs = (
                 db.query(ConversationMessage)
@@ -399,20 +425,23 @@ class AgentChatService:
                     ConversationMessage.id != user_msg.id,
                 )
                 .order_by(ConversationMessage.created_at.desc())
-                .limit(4)
+                .limit(6)
                 .all()
             )
             for m in past_user_msgs:
                 m_norm = m.content.strip()
-                if any(k in m_norm.lower() for k in ["scene", "seen", "story", "jisme", "character", "fighting", "video"]):
+                if any(k in m_norm.lower() for k in ["scene", "seen", "story", "jisme", "character", "fighting", "video", "world war", "animation", "creat"]):
                     clean_prompt = m_norm
                     logger.info(f"Synthesized bare build trigger with previous story context: {clean_prompt[:100]}")
                     break
 
+        # Standardize topic / fix typos in prompt so Emergent generates clean video
+        clean_prompt = re.sub(r"\bworld\s+wor\s*2\b", "World War 2", clean_prompt, flags=re.I)
+        clean_prompt = re.sub(r"\banimeted\s+seen\b", "animated scene", clean_prompt, flags=re.I)
+
         # Enforce single video generation if user requested 1 video ("ek video", "1 video", "single video")
         if work_type == "VIDEO_CREATION":
-            if any(k in prompt.lower() for k in ["ek video", "1 video", "single video", "sirf ek", "ek hi"]):
-                clean_prompt = f"{clean_prompt} (Single continuous scene / 1 video only, do not generate multiple scenes or multi-part versions)"
+            clean_prompt = f"{clean_prompt} (Single continuous scene / 1 video only, do not generate multiple scenes or multi-part versions)"
 
         prompt_for_build = clean_prompt
 
@@ -613,12 +642,36 @@ class AgentChatService:
             return 0.0
 
     def _classify_conversational_intent(
-        self, text: str, existing_task: Optional[AutonomousTask]
+        self,
+        text: str,
+        existing_task: Optional[AutonomousTask],
+        conversation_id: Optional[int] = None,
+        db: Optional[Session] = None,
     ) -> Tuple[str, str]:
         """Returns (intent_mode, work_type) where intent_mode in ('CONVERSATION', 'BUILD_TASK', 'REGENERATE_LAST')."""
         norm = normalize_prompt_text(text).lower().strip()
         norm_no_punct = re.sub(r"[^\w\s]", " ", norm).strip()
         words = norm_no_punct.split()
+
+        # 0. Follow-up / Confirmation triggers ("ha ba do ab", "haan bana do", "banao ab", "start it", etc.)
+        is_confirm = (
+            any(
+                re.search(p, norm) for p in [
+                    r"\b(?:ha|haan|haa|han|yes|ok|okay|theek|thik|chalo|accha)\s+(?:ba\s+do|bana\s+do|bna\s+do|banao|bnao|kar\s+do|karo|kro|start|create|render)\b",
+                    r"\b(?:ba\s+do|bana\s+do|bna\s+do|banao|bnao|kar\s+do|kro)\s+(?:ab|abhi|bhai|yr|yaar|now)\b",
+                    r"^(?:ha|haan|han|yes)\s+(?:ba|bana|bna)\s+(?:do|doo)\b",
+                    r"\b(?:is\s+par\s+video\s+bana|ab\s+video\s+bana|bana\s+do\s+ab|bna\s+do\s+ab|banao\s+ab|bnao\s+ab)\b",
+                    r"^(?:banao|bnao|render|start|create\s+it|generate\s+it|shuru\s+karo)$",
+                ]
+            )
+            or norm in [
+                "ha ba do ab", "ha bna do ab", "haan bana do", "ha bana do", "bana do ab", "bna do ab",
+                "banao ab", "bnao ab", "chalo banao", "ha ba do", "haan bana do ab", "ha bana do ab",
+                "bana do", "bna do", "banao", "bnao", "kar do", "start", "render"
+            ]
+        )
+        if is_confirm:
+            return "BUILD_TASK", "VIDEO_CREATION"
 
         # 1. Regeneration request for an existing video/build
         regen_keywords = [
@@ -629,7 +682,43 @@ class AgentChatService:
         if existing_task and any(k in norm for k in regen_keywords):
             return "REGENERATE_LAST", existing_task.work_type
 
-        # 2. Complaint / Feedback / Bot behavior / "har baat pe video bana deta hai"
+        # 2. Direct Video Creation Intent (Typo-tolerant: "creat", "bnao", "bnake doo", "30 sec video", etc.)
+        has_creation_verb = any(
+            re.search(p, norm) for p in [
+                r"\b(?:creat|create|creates|creating|creation|make|making|generate|generating|render|rendering|produce|producing|build|building)\b",
+                r"\b(?:banao|bnao|bana|bna|bnana|banani|bnani|banayein|bnayein|banake|bnake|ba\s+do|bna\s+do|bana\s+do|chahiye|chiye|chaiye|chahie)\b",
+            ]
+        )
+        has_video_noun = any(
+            re.search(p, norm) for p in [
+                r"\b(?:video|vieo|vidio|vedio|vdo|videos|vdos)\b",
+                r"\b(?:animated\s+scene|animeted\s+seen|animated\s+video|animation)\b",
+                r"\b(?:reel|reels|clip|clips|short|shorts)\b",
+            ]
+        )
+        has_web_build = any(
+            re.search(p, norm) for p in [
+                r"\b(website\s+banao|web\s+app\s+banao|app\s+banao|dashboard\s+banao|landing\s+page\s+banao)\b",
+                r"\b(build\s+(?:a\s+)?(?:responsive\s+)?(?:website|web\s+app|app|dashboard|landing\s+page|portfolio|portal))\b",
+                r"\b(create\s+(?:a\s+)?(?:responsive\s+)?(?:website|web\s+app|app|dashboard|landing\s+page|portfolio|portal))\b",
+                r"\b(develop\s+(?:a\s+)?(?:website|app|web\s+app))\b",
+            ]
+        )
+
+        # Check pure questions about credits/balance (e.g. "credits kitne bache hain?")
+        is_pure_question = any(k in norm for k in ["credits kitne", "kitne credit", "balance kitna", "headroom", "kaise banta hai", "process kya hai"]) and not any(k in norm for k in ["world war", "story", "character", "sec", "second", "action", "fight", "boy", "girl", "car", "anime"])
+
+        if has_creation_verb and has_video_noun and not is_pure_question:
+            return "BUILD_TASK", "VIDEO_CREATION"
+
+        if has_web_build and not is_pure_question:
+            return "BUILD_TASK", "WEBSITE_APP_DEV"
+
+        # Also check "ek ... video" phrases
+        if re.search(r"\b(?:ek|1)\s+(?:video|vieo|vidio|vedio|vdo)\b", norm) and not is_pure_question:
+            return "BUILD_TASK", "VIDEO_CREATION"
+
+        # 3. Complaint / Feedback / Bot behavior (only when not asking to make something)
         complaint_markers = [
             "issue", "problem", "dikkat", "galti", "bug", "galat", "kharab", "gadbad",
             "samajh nahi", "samajhta nahi", "samajhta hi nahi", "samajhta hi nhi",
@@ -642,7 +731,7 @@ class AgentChatService:
         if any(m in norm for m in complaint_markers):
             return "CONVERSATION", "GENERAL"
 
-        # 3. Collaboration / Scene planning proposition ("ek ek karke scene bataunga", "pehle discuss karte hain")
+        # 4. Collaboration / Scene planning proposition
         collab_markers = [
             "ek ek karke", "ek ek krke", "scene bataunga", "seen btaunga", "story bataunga", "kahani bataunga",
             "pehle discuss", "pehle baat", "pehle script", "tum banate rehna", "tum bnate rhna",
@@ -651,27 +740,25 @@ class AgentChatService:
         if any(m in norm for m in collab_markers):
             return "CONVERSATION", "GENERAL"
 
-        # 4. User is giving a scene description ("Scene 1: ...", "Scene 2: ...", "Chapter 1: ...")
+        # 5. User is giving a scene description
         if re.search(r"\b(scene\s*\d+|seen\s*\d+|chapter\s*\d+|pehla\s*scene|dusra\s*scene|agla\s*scene)\b", norm):
-            # Unless user explicitly commands final rendering right now
             if not any(v in norm for v in ["ab video bana", "final video bana", "video render karo", "create video now"]):
                 return "CONVERSATION", "GENERAL"
 
-        # 5. Questions / Inquiries (never auto-generate on questions)
+        # 6. Questions / Inquiries
         question_starters = [
             "kya", "kaise", "kse", "kyun", "kyu", "kaisa", "kaisi", "kaha", "kahan", "kab", "kitna", "kitne", "kitni",
-            "what", "how", "why", "where", "when", "which", "who", "can you", "could you", "is it", "will you",
-            "help", "status", "credit", "credits", "balance", "cost", "headroom"
+            "what", "how", "why", "where", "when", "which", "who", "help", "status", "credit", "credits", "balance"
         ]
         is_question = (
             "?" in text
             or (words and words[0] in question_starters)
             or any(re.search(rf"\b{q}\b", norm) for q in ["kaise", "kyun", "kahan", "kitne", "how does", "what is", "where is"])
         )
-        if is_question and not re.search(r"\b(ab video bana do|video create karo abhi|generate video now)\b", norm):
+        if is_question and not any(v in norm for v in ["banao", "bnao", "create", "generate"]):
             return "CONVERSATION", "GENERAL"
 
-        # 6. Greetings & Chitchat
+        # 7. Greetings & Chitchat
         greetings = [
             "hi", "hello", "hey", "hlo", "namaste", "good morning", "good evening",
             "kaise ho", "kya haal", "how are you", "who are you", "tum kaun ho",
@@ -681,29 +768,6 @@ class AgentChatService:
         if norm_no_punct in greetings or (len(words) <= 3 and words[0] in ["hi", "hello", "hey", "kaise", "suno"]):
             return "CONVERSATION", "GENERAL"
 
-        # 7. Action verbs explicitly requesting building/rendering RIGHT NOW
-        video_build_patterns = [
-            r"\b(?:video|vieo|vidio|vedio|vdo)\s+(?:banao|bnao|bana\s+do|bna\s+do|banayein|create|generate)\b",
-            r"\b(?:ek\s+)?(?:video|vieo|vidio|vedio|vdo)\s+(?:banao|bnao|bana|bna)\b",
-            r"\b(?:create\s+a\s+video|create\s+an\s+animated\s+video|create\s+video|generate\s+video|render\s+video|make\s+a\s+video|make\s+video)\b",
-            r"\b(?:ab\s+video\s+bana|final\s+video\s+bana|chalo\s+video\s+banao|video\s+render\s+karo)\b",
-        ]
-        has_video_build = any(re.search(p, norm) for p in video_build_patterns)
-
-        web_build_patterns = [
-            r"\b(website\s+banao|web\s+app\s+banao|app\s+banao|dashboard\s+banao|landing\s+page\s+banao)\b",
-            r"\b(build\s+(?:a\s+)?(?:responsive\s+)?(?:website|web\s+app|app|dashboard|landing\s+page|portfolio|portal))\b",
-            r"\b(create\s+(?:a\s+)?(?:responsive\s+)?(?:website|web\s+app|app|dashboard|landing\s+page|portfolio|portal))\b",
-            r"\b(develop\s+(?:a\s+)?(?:website|app|web\s+app))\b",
-        ]
-        has_web_build = any(re.search(p, norm) for p in web_build_patterns)
-
-        if has_video_build:
-            return "BUILD_TASK", "VIDEO_CREATION"
-        if has_web_build:
-            return "BUILD_TASK", "WEBSITE_APP_DEV"
-
-        # Default to natural conversation!
         return "CONVERSATION", "GENERAL"
 
     def _generate_conversational_reply(
