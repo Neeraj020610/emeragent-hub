@@ -256,6 +256,7 @@ def get_task_logs(
 @router.api_route("/tasks/{task_id}/video", methods=["GET", "HEAD"])
 def get_task_video(
     task_id: int,
+    download: bool = Query(False),
     db: Session = Depends(get_db),
 ):
     """Streams and serves the actual MP4 video file tailored to this task's prompt."""
@@ -289,11 +290,22 @@ def get_task_video(
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Video file not found")
 
+    if download:
+        return FileResponse(
+            file_path,
+            media_type="video/mp4",
+            filename=f"{task.task_identifier}.mp4",
+            headers={"Content-Disposition": f'attachment; filename="{task.task_identifier}.mp4"'},
+        )
+
     return FileResponse(
         file_path,
         media_type="video/mp4",
-        filename=f"{task.task_identifier}.mp4",
-        headers={"Accept-Ranges": "bytes"},
+        headers={
+            "Content-Disposition": "inline",
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "public, max-age=7200",
+        },
     )
 
 

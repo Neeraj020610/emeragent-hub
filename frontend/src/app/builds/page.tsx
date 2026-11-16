@@ -1800,10 +1800,12 @@ function BuildsContent() {
                             key={`${activeArtifactTask.id}-${activeArtifactTask.task_identifier}-${activeArtifactTask.status}`}
                             controls
                             playsInline
-                            preload="auto"
+                            preload="metadata"
                             className="w-full h-full object-contain"
-                            src={`/api/v1/autonomous/tasks/${activeArtifactTask.id}/video`}
+                            src={`/artifacts/videos/${activeArtifactTask.task_identifier}.mp4`}
                           >
+                            <source src={`/artifacts/videos/${activeArtifactTask.task_identifier}.mp4`} type="video/mp4" />
+                            <source src={`/api/v1/autonomous/tasks/${activeArtifactTask.id}/video`} type="video/mp4" />
                             Your browser does not support the video tag.
                           </video>
                         </div>
@@ -1818,7 +1820,7 @@ function BuildsContent() {
                           </div>
 
                           <a
-                            href={`/api/v1/autonomous/tasks/${activeArtifactTask.id}/video`}
+                            href={`/artifacts/videos/${activeArtifactTask.task_identifier}.mp4`}
                             download={`${activeArtifactTask.task_identifier}.mp4`}
                             target="_blank"
                             rel="noreferrer"
