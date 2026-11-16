@@ -1780,10 +1780,19 @@ function BuildsContent() {
                       {isRealGenerating ? (
                         <div className="relative aspect-video rounded-xl bg-slate-900 border border-slate-800 overflow-hidden flex flex-col justify-center items-center">
                           <img
-                            src={`/api/v1/autonomous/tasks/${activeArtifactTask.id}/preview-image?t=${Date.now()}`}
+                            src={`/api/v1/autonomous/tasks/${activeArtifactTask.id}/preview-image?t=${Math.floor(Date.now() / 3000)}`}
                             alt="Live Emergent Video Progress"
                             className="w-full h-full object-contain"
+                            onError={(e) => {
+                              const target = e.currentTarget as HTMLImageElement;
+                              target.style.display = "none";
+                            }}
                           />
+                          <div className="absolute inset-0 -z-0 flex flex-col items-center justify-center p-6 text-center text-slate-400 space-y-2 pointer-events-none">
+                            <div className="w-8 h-8 rounded-full border-2 border-emerald-500/30 border-t-emerald-400 animate-spin" />
+                            <p className="font-semibold text-xs text-emerald-300">Live Emergent Studio Rendering...</p>
+                            <p className="text-[11px] text-slate-400">Capturing live workspace frames from app.emergent.sh</p>
+                          </div>
                         </div>
                       ) : (
                         <div className="relative aspect-video rounded-xl bg-black border border-slate-800 overflow-hidden shadow-2xl flex flex-col justify-center items-center">

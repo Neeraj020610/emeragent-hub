@@ -646,6 +646,31 @@ async def _execute_emergent_browser_workflow(
             except Exception:
                 await composer.press("Enter")
 
+            # Handle first-time "Creating videos on Emergent" Video Use Policy dialog immediately after submission
+            try:
+                for _ in range(4):
+                    agree_btn = page.locator("button:has-text('I agree, continue')").first
+                    if await agree_btn.is_visible(timeout=1000):
+                        cb = page.locator("[role='dialog'] input[type='checkbox'], [role='dialog'] [role='checkbox'], input[type='checkbox']").first
+                        if await cb.is_visible(timeout=800):
+                            await cb.click(force=True)
+                            await asyncio.sleep(0.3)
+                        await agree_btn.click(timeout=3000, force=True)
+                        await asyncio.sleep(1.0)
+                        break
+                    await asyncio.sleep(0.5)
+            except Exception:
+                pass
+
+            # If still on /home, re-trigger submit
+            if "/home" in page.url.lower():
+                try:
+                    re_btn = page.locator("button[data-testid='main-task-submit']").first
+                    if await re_btn.is_visible(timeout=1500):
+                        await re_btn.click(force=True)
+                except Exception:
+                    pass
+
             _append_task_log(task_id, "Submitted prompt to live Emergent Studio composer.", step="EMERGENT_PROMPT_SUBMITTED")
             checkpoints.append({"step": "EMERGENT_PROMPT_SUBMITTED", "completed_at": utcnow().isoformat()})
             _update_task_fields(task_id, checkpoints=checkpoints)
@@ -787,7 +812,8 @@ async def _execute_emergent_browser_workflow(
                 if work_type == "VIDEO_CREATION":
                     vid_src = await _detect_emergent_video_asset(page)
                     if vid_src:
-                        video_dir = os.path.join(os.getcwd(), "storage", "artifacts", "videos")
+                        backend_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+                        video_dir = os.path.join(backend_root, "storage", "artifacts", "videos")
                         os.makedirs(video_dir, exist_ok=True)
                         local_mp4 = os.path.join(video_dir, f"{task_identifier}.mp4")
                         raw_bytes: bytes = b""

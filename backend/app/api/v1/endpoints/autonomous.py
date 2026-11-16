@@ -4,7 +4,7 @@ import shutil
 from typing import Any, Dict, List, Optional
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -263,8 +263,13 @@ def get_task_video(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    video_dir = os.path.join(os.getcwd(), "storage", "artifacts", "videos")
+    backend_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+    video_dir = os.path.join(backend_root, "storage", "artifacts", "videos")
     file_path = os.path.join(video_dir, f"{task.task_identifier}.mp4")
+    if not os.path.exists(file_path):
+        alt_path = os.path.join(os.getcwd(), "storage", "artifacts", "videos", f"{task.task_identifier}.mp4")
+        if os.path.exists(alt_path):
+            file_path = alt_path
 
     if not os.path.exists(file_path):
         if not task.is_mock:
@@ -297,16 +302,37 @@ def get_task_preview_image(
     task_id: int,
     db: Session = Depends(get_db),
 ):
-    """Serves the latest live Emergent browser screenshot captured for a real task."""
+    """Serves the latest live Emergent browser screenshot captured for a real task, or an informative live SVG placeholder."""
     task = db.query(AutonomousTask).filter(AutonomousTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    shot_path = os.path.join(os.getcwd(), "storage", "artifacts", "emergent_shots", f"{task.task_identifier}.png")
+
+    backend_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+    shot_path = os.path.join(backend_root, "storage", "artifacts", "emergent_shots", f"{task.task_identifier}.png")
     if not os.path.exists(shot_path):
-        raise HTTPException(status_code=404, detail="Preview screenshot not available yet")
-    return FileResponse(
-        shot_path,
-        media_type="image/png",
+        alt_path = os.path.join(os.getcwd(), "storage", "artifacts", "emergent_shots", f"{task.task_identifier}.png")
+        if os.path.exists(alt_path):
+            shot_path = alt_path
+
+    if os.path.exists(shot_path):
+        return FileResponse(
+            shot_path,
+            media_type="image/png",
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+        )
+
+    # Return elegant SVG live placeholder instead of 404 to prevent browser broken image icon
+    placeholder_svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450">
+  <rect width="800" height="450" fill="#090d16"/>
+  <circle cx="400" cy="180" r="32" stroke="#10b981" stroke-width="4" fill="none" opacity="0.3"/>
+  <circle cx="400" cy="180" r="32" stroke="#10b981" stroke-width="4" stroke-dasharray="80" stroke-dashoffset="20" fill="none"/>
+  <text x="400" y="250" fill="#34d399" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="600" text-anchor="middle">Live Emergent Studio Rendering...</text>
+  <text x="400" y="278" fill="#94a3b8" font-family="system-ui, -apple-system, sans-serif" font-size="13" text-anchor="middle">Connected to app.emergent.sh • Generating storyboard scenes &amp; audio</text>
+  <text x="400" y="310" fill="#64748b" font-family="system-ui, -apple-system, sans-serif" font-size="11" text-anchor="middle">{task.task_identifier} • Status: {task.status}</text>
+</svg>"""
+    return Response(
+        content=placeholder_svg,
+        media_type="image/svg+xml",
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )
 
