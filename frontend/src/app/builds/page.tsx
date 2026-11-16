@@ -274,6 +274,21 @@ function BuildsContent() {
 
   // Deliverables & Output Modal
   const [activeArtifactTask, setActiveArtifactTask] = useState<AutonomousTask | null>(null);
+  const [downloadingTaskId, setDownloadingTaskId] = useState<number | null>(null);
+
+  const handleDownloadVideo = (task: AutonomousTask) => {
+    setDownloadingTaskId(task.id);
+    const downloadUrl = `/api/v1/autonomous/tasks/${task.id}/video?download=true`;
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.setAttribute("download", `${task.task_identifier}.mp4`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => {
+      setDownloadingTaskId(null);
+    }, 2500);
+  };
 
   // --- Agent Chat State ---
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
@@ -1801,8 +1816,8 @@ function BuildsContent() {
                             controls
                             playsInline
                             preload="metadata"
+                            poster={`/artifacts/videos/${activeArtifactTask.task_identifier}-poster.jpg`}
                             className="w-full h-full object-contain"
-                            src={`/artifacts/videos/${activeArtifactTask.task_identifier}.mp4`}
                           >
                             <source src={`/artifacts/videos/${activeArtifactTask.task_identifier}.mp4`} type="video/mp4" />
                             <source src={`/api/v1/autonomous/tasks/${activeArtifactTask.id}/video`} type="video/mp4" />
@@ -1813,22 +1828,45 @@ function BuildsContent() {
 
                       {/* Video Actions: Direct Download */}
                       {!isRealGenerating && (
-                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800">
-                          <div className="text-[11px] text-slate-400 font-mono flex items-center gap-1.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800">
+                          <div className="text-[11px] text-slate-400 font-mono flex items-center gap-2">
                             <Film className="w-3.5 h-3.5 text-purple-400" />
                             <span>{activeArtifactTask.task_identifier}.mp4</span>
+                            <span className="text-[10px] text-emerald-400 bg-emerald-950/70 border border-emerald-500/40 px-1.5 py-0.5 rounded font-sans">
+                              Ready to Download
+                            </span>
                           </div>
 
-                          <a
-                            href={`/artifacts/videos/${activeArtifactTask.task_identifier}.mp4`}
-                            download={`${activeArtifactTask.task_identifier}.mp4`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-semibold text-xs flex items-center gap-1.5 shadow-md transition-colors"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            Download MP4 Video
-                          </a>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadVideo(activeArtifactTask)}
+                              disabled={downloadingTaskId === activeArtifactTask.id}
+                              className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs flex items-center gap-2 shadow-lg hover:shadow-purple-500/25 transition-all cursor-pointer disabled:opacity-60"
+                            >
+                              {downloadingTaskId === activeArtifactTask.id ? (
+                                <>
+                                  <div className="w-3.5 h-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                                  <span>Downloading...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Download className="w-4 h-4" />
+                                  <span>Download MP4 Video</span>
+                                </>
+                              )}
+                            </button>
+
+                            <a
+                              href={`/download/artifacts/videos/${activeArtifactTask.task_identifier}.mp4`}
+                              download={`${activeArtifactTask.task_identifier}.mp4`}
+                              className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-medium text-xs border border-slate-700 flex items-center gap-1.5 transition-colors"
+                              title="Direct Server Download (Nginx Faststream)"
+                            >
+                              <Download className="w-3 h-3 text-slate-400" />
+                              <span>Direct Link</span>
+                            </a>
+                          </div>
                         </div>
                       )}
                     </div>
