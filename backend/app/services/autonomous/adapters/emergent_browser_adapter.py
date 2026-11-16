@@ -728,12 +728,12 @@ async def _execute_emergent_browser_workflow(
                                     task_id,
                                     f"Live account credits depleted to {live_cr} (< 5.0 Cr). Account marked inactive (< 5 Cr); auto-failover initiated.",
                                     step="CREDITS_DEPLETED",
-                                    level="WARN"
+                                    level="WARN",
                                 )
                     except Exception as cr_err:
                         logger.debug(f"Live periodic credit sync note: {cr_err}")
 
-                # Auto-advance Emergent Video Director approval gates (Frames / Scenes) & unanswered wizard
+                # Auto-advance Emergent Video Director approval gates, questionnaires & wizard steps
                 if work_type == "VIDEO_CREATION":
                     try:
                         approve_btn = page.locator("button:has-text('Approve'):visible").first
@@ -743,15 +743,20 @@ async def _execute_emergent_browser_workflow(
                             await asyncio.sleep(1.0)
                     except Exception:
                         pass
-                    if poll_idx >= 4:
-                        try:
-                            skip_btn = page.locator("button:has-text('Skip'):visible").first
-                            if await skip_btn.is_visible(timeout=200):
-                                await skip_btn.click(timeout=2000)
-                                _append_task_log(task_id, "Auto-skipped Emergent Director clarification prompt.", step="EMERGENT_WIZARD_SKIPPED")
+
+                    # Auto-advance interactive Director questionnaires:
+                    # ALWAYS click 'Skip' or 'Continue' first to let Director make the creative decision
+                    # (Avoid clicking raw 'Submit' which triggers 'Couldn't submit your decision' client validation error)
+                    try:
+                        for auto_opt in ["Skip", "Continue", "You decide", "4.You decide"]:
+                            opt_btn = page.locator(f"button:has-text('{auto_opt}'):visible").first
+                            if await opt_btn.is_visible(timeout=250):
+                                await opt_btn.click(timeout=2500)
+                                _append_task_log(task_id, f"Auto-advanced Emergent Director option: {auto_opt}", step="EMERGENT_WIZARD_ADVANCED")
                                 await asyncio.sleep(1.0)
-                        except Exception:
-                            pass
+                                break
+                    except Exception:
+                        pass
                 await _save_task_screenshot(page, task_identifier)
 
                 err_banner = await _check_emergent_errors(page)
