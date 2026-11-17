@@ -10,6 +10,8 @@ export interface AccountItem {
   organization: string;
   owner_user_id?: number | null;
   owner_name?: string | null;
+  owner_email?: string | null;
+  created_at?: string | null;
   ownership_type: "COMPANY_OWNED" | "PERSONAL";
   description?: string | null;
   status: "active" | "suspended" | "pending";

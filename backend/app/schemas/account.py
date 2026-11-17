@@ -96,6 +96,7 @@ class EmergentAccountUpdate(BaseModel):
 class EmergentAccountResponse(EmergentAccountBase):
     id: int
     account_identifier: str
+    owner_email: Optional[str] = None
     mailbox_email: Optional[str] = None
     connection_status: str
     credit_sync_status: str = "manual_only"

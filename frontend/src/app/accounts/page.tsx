@@ -39,6 +39,8 @@ import {
   Coins,
   LogIn,
   Hourglass,
+  Calendar,
+  UserCheck,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -145,6 +147,10 @@ function AccountsContent() {
   const [accountFilterCategory, setAccountFilterCategory] = useState<
     "ALL" | "ACTIVE" | "STANDBY" | "LOGIN_REQUIRED" | "EXHAUSTED"
   >("ALL");
+  const [dateFilter, setDateFilter] = useState<
+    "TODAY" | "YESTERDAY" | "LAST_7_DAYS" | "ALL" | "CUSTOM"
+  >("TODAY");
+  const [customDate, setCustomDate] = useState<string>("");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [accountToDelete, setAccountToDelete] = useState<AccountItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -176,7 +182,7 @@ function AccountsContent() {
   const loadAccounts = async () => {
     try {
       const data = await apiFetch<any[]>("/accounts");
-      if (data && data.length > 0) {
+      if (Array.isArray(data)) {
         setAccounts(
           data.map((d) => ({
             id: d.id,
@@ -184,7 +190,10 @@ function AccountsContent() {
             account_name: d.account_name,
             email: d.email,
             organization: d.organization || "Enterprise",
+            owner_user_id: d.owner_user_id,
             owner_name: d.owner_name || "Enterprise Admin",
+            owner_email: d.owner_email || null,
+            created_at: d.created_at || null,
             ownership_type: (d.ownership_type as any) || "COMPANY_OWNED",
             description: d.description || "",
             status: d.status,
@@ -687,20 +696,69 @@ function AccountsContent() {
     .filter(isAccountInStandby)
     .reduce((sum, a) => sum + Number(a.latest_credit_balance || 0), 0);
 
+  const getLocalDateString = (d: string | Date | null | undefined) => {
+    if (!d) return "";
+    const dateObj = new Date(d);
+    if (isNaN(dateObj.getTime())) return "";
+    const year = dateObj.getFullYear();
+    const month = String(dateObj.getMonth() + 1).padStart(2, "0");
+    const day = String(dateObj.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const todayStr = getLocalDateString(new Date());
+  const yesterdayObj = new Date();
+  yesterdayObj.setDate(yesterdayObj.getDate() - 1);
+  const yesterdayStr = getLocalDateString(yesterdayObj);
+
+  const isAccountInDateFilter = (a: AccountItem) => {
+    if (dateFilter === "ALL") return true;
+    if (!a.created_at) return false;
+    const aDate = getLocalDateString(a.created_at);
+
+    if (dateFilter === "TODAY") {
+      return aDate === todayStr;
+    }
+    if (dateFilter === "YESTERDAY") {
+      return aDate === yesterdayStr;
+    }
+    if (dateFilter === "LAST_7_DAYS") {
+      const aTime = new Date(a.created_at).getTime();
+      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      return aTime >= cutoff;
+    }
+    if (dateFilter === "CUSTOM" && customDate) {
+      return aDate === customDate;
+    }
+    return true;
+  };
+
+  const todayAccountsCount = accounts.filter((a) => a.created_at && getLocalDateString(a.created_at) === todayStr).length;
+  const yesterdayAccountsCount = accounts.filter((a) => a.created_at && getLocalDateString(a.created_at) === yesterdayStr).length;
+  const last7DaysCount = accounts.filter((a) => {
+    if (!a.created_at) return false;
+    return new Date(a.created_at).getTime() >= (Date.now() - 7 * 24 * 60 * 60 * 1000);
+  }).length;
+
   const filteredAccounts = accounts.filter((a) => {
-    // 1. Category Filter
+    // 1. Date Filter (Default: TODAY)
+    if (!isAccountInDateFilter(a)) return false;
+
+    // 2. Category Filter
     if (accountFilterCategory === "ACTIVE" && !isAccountActiveWorker(a)) return false;
     if (accountFilterCategory === "STANDBY" && !isAccountInStandby(a)) return false;
     if (accountFilterCategory === "LOGIN_REQUIRED" && !isAccountLoginRequired(a)) return false;
     if (accountFilterCategory === "EXHAUSTED" && !isAccountExhausted(a)) return false;
 
-    // 2. Search Query
+    // 3. Search Query
     const q = searchQuery.toLowerCase().trim();
     if (!q) return true;
     return (
       a.account_name.toLowerCase().includes(q) ||
       a.account_identifier.toLowerCase().includes(q) ||
-      (a.email && a.email.toLowerCase().includes(q))
+      (a.email && a.email.toLowerCase().includes(q)) ||
+      (a.owner_name && a.owner_name.toLowerCase().includes(q)) ||
+      (a.owner_email && a.owner_email.toLowerCase().includes(q))
     );
   });
 
@@ -1162,12 +1220,139 @@ function AccountsContent() {
             </div>
           </div>
 
+          {/* Row 3: Dedicated Date Added Filter Toolbar (Default: Today) */}
+          <div className="flex flex-wrap items-center justify-between gap-2.5 bg-slate-50/90 p-2.5 px-3 rounded-xl border border-slate-200 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5 uppercase tracking-wider">
+                <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                Date Added:
+              </span>
+
+              {/* Today Button (Default) */}
+              <button
+                type="button"
+                onClick={() => setDateFilter("TODAY")}
+                className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  dateFilter === "TODAY"
+                    ? "bg-blue-600 text-white shadow-xs"
+                    : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
+                }`}
+              >
+                Today
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-semibold ${
+                  dateFilter === "TODAY" ? "bg-blue-800 text-white" : "bg-blue-50 text-blue-700 border border-blue-200"
+                }`}>
+                  {todayAccountsCount}
+                </span>
+              </button>
+
+              {/* Yesterday Button */}
+              <button
+                type="button"
+                onClick={() => setDateFilter("YESTERDAY")}
+                className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  dateFilter === "YESTERDAY"
+                    ? "bg-blue-600 text-white shadow-xs"
+                    : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
+                }`}
+              >
+                Yesterday
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-semibold ${
+                  dateFilter === "YESTERDAY" ? "bg-blue-800 text-white" : "bg-slate-100 text-slate-600"
+                }`}>
+                  {yesterdayAccountsCount}
+                </span>
+              </button>
+
+              {/* Last 7 Days Button */}
+              <button
+                type="button"
+                onClick={() => setDateFilter("LAST_7_DAYS")}
+                className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  dateFilter === "LAST_7_DAYS"
+                    ? "bg-blue-600 text-white shadow-xs"
+                    : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
+                }`}
+              >
+                Last 7 Days
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-semibold ${
+                  dateFilter === "LAST_7_DAYS" ? "bg-blue-800 text-white" : "bg-slate-100 text-slate-600"
+                }`}>
+                  {last7DaysCount}
+                </span>
+              </button>
+
+              {/* All Dates Button */}
+              <button
+                type="button"
+                onClick={() => setDateFilter("ALL")}
+                className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  dateFilter === "ALL"
+                    ? "bg-slate-900 text-white shadow-xs"
+                    : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
+                }`}
+              >
+                All Dates
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-semibold ${
+                  dateFilter === "ALL" ? "bg-slate-700 text-white" : "bg-slate-100 text-slate-600"
+                }`}>
+                  {accounts.length}
+                </span>
+              </button>
+
+              {/* Custom Date Picker */}
+              <div className="flex items-center gap-1.5 pl-2 border-l border-slate-200">
+                <span className="text-[10px] text-slate-500 font-medium">Custom:</span>
+                <input
+                  type="date"
+                  value={customDate}
+                  onChange={(e) => {
+                    setCustomDate(e.target.value);
+                    if (e.target.value) setDateFilter("CUSTOM");
+                  }}
+                  className="px-2 py-0.5 text-xs bg-white border border-slate-200 rounded-md text-slate-700 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+            </div>
+
+            {/* Filter Summary Banner */}
+            <div className="text-[11px] font-medium text-slate-500 flex items-center gap-1">
+              <span>Showing:</span>
+              <span className="font-bold text-slate-900">
+                {filteredAccounts.length} accounts
+              </span>
+              <span>
+                (
+                {dateFilter === "TODAY"
+                  ? "Added Today"
+                  : dateFilter === "YESTERDAY"
+                  ? "Added Yesterday"
+                  : dateFilter === "LAST_7_DAYS"
+                  ? "Added Last 7 Days"
+                  : dateFilter === "CUSTOM"
+                  ? `Added on ${customDate || "Selected Date"}`
+                  : "All Time"}
+                )
+              </span>
+              {dateFilter !== "ALL" && (
+                <button
+                  type="button"
+                  onClick={() => setDateFilter("ALL")}
+                  className="ml-1 text-blue-600 hover:underline font-bold"
+                >
+                  Clear Date
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-slate-600 uppercase tracking-wider text-[10px] border-b border-slate-200">
                 <tr>
                   <th className="px-4 py-3">Account Name</th>
                   <th className="px-4 py-3">Identifier</th>
+                  <th className="px-4 py-3">Added By (Creator)</th>
                   <th className="px-4 py-3">Ownership</th>
                   <th className="px-4 py-3">Auth Type</th>
                   <th className="px-4 py-3">Connection</th>
@@ -1178,11 +1363,15 @@ function AccountsContent() {
               <tbody className="divide-y divide-slate-100 text-slate-700">
                 {filteredAccounts.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-12 text-center text-slate-400">
+                    <td colSpan={8} className="py-12 text-center text-slate-400">
                       <div className="max-w-xs mx-auto space-y-2">
                         <Server className="w-8 h-8 mx-auto text-slate-300" />
                         <div className="font-semibold text-slate-700">
-                          {accountFilterCategory === "ACTIVE"
+                          {dateFilter === "TODAY"
+                            ? "No accounts added Today"
+                            : dateFilter === "YESTERDAY"
+                            ? "No accounts added Yesterday"
+                            : accountFilterCategory === "ACTIVE"
                             ? "No Active Worker Account"
                             : accountFilterCategory === "STANDBY"
                             ? "No Accounts in Standby Queue"
@@ -1193,24 +1382,37 @@ function AccountsContent() {
                             : "No accounts found"}
                         </div>
                         <p className="text-[11px] text-slate-500">
-                          {searchQuery
+                          {dateFilter === "TODAY"
+                            ? "No accounts were added today yet. Click 'View All Dates' below to see all accounts."
+                            : searchQuery
                             ? "Try adjusting your search criteria or clear the search query."
                             : accountFilterCategory !== "ALL"
                             ? `No accounts currently match the ${accountFilterCategory.replace("_", " ").toLowerCase()} section filter.`
                             : "No accounts registered yet."}
                         </p>
-                        {accountFilterCategory !== "ALL" && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setAccountFilterCategory("ALL");
-                              setSearchQuery("");
-                            }}
-                            className="mt-2 px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700 transition-colors"
-                          >
-                            View All Accounts
-                          </button>
-                        )}
+                        <div className="flex items-center justify-center gap-2 mt-2">
+                          {dateFilter !== "ALL" && (
+                            <button
+                              type="button"
+                              onClick={() => setDateFilter("ALL")}
+                              className="px-3 py-1 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-semibold border border-blue-200 transition-colors"
+                            >
+                              View All Dates ({accounts.length})
+                            </button>
+                          )}
+                          {accountFilterCategory !== "ALL" && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAccountFilterCategory("ALL");
+                                setSearchQuery("");
+                              }}
+                              className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700 transition-colors"
+                            >
+                              Reset Category
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </td>
                   </tr>
@@ -1237,6 +1439,23 @@ function AccountsContent() {
                       <div className="text-[11px] text-slate-500">{acc.email || "No email assigned"}</div>
                     </td>
                     <td className="px-4 py-3 font-mono font-semibold text-blue-600">{acc.account_identifier}</td>
+                    <td className="px-4 py-3">
+                      <div className="font-bold text-slate-800 text-xs flex items-center gap-1">
+                        <UserCheck className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                        <span className="truncate max-w-[120px]">{acc.owner_name || "Enterprise Admin"}</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 font-mono truncate max-w-[140px]" title={acc.owner_email || ""}>
+                        {acc.owner_email || (acc.owner_user_id ? `User #${acc.owner_user_id}` : "System")}
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-medium mt-0.5 flex items-center gap-1">
+                        <Clock className="w-2.5 h-2.5 text-slate-400 shrink-0" />
+                        <span>
+                          {acc.created_at
+                            ? new Date(acc.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+                            : "Pre-configured"}
+                        </span>
+                      </div>
+                    </td>
                     <td className="px-4 py-3">
                       <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700">
                         {acc.ownership_type}

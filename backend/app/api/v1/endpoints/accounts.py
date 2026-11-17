@@ -73,11 +73,15 @@ def _format_account_response(acc: EmergentAccount, db: Session) -> EmergentAccou
     mailbox = db.query(MailboxAccount).filter(MailboxAccount.account_id == acc.id).first()
     mb_email = mailbox.email_address if mailbox else None
 
+    owner_user = db.query(User).filter(User.id == acc.owner_user_id).first() if acc.owner_user_id else None
+    owner_email = owner_user.email if owner_user else None
+
     return EmergentAccountResponse(
         id=acc.id,
         account_identifier=acc.account_identifier,
         account_name=acc.account_name,
         email=acc.email,
+        owner_email=owner_email,
         mailbox_email=mb_email,
         organization=acc.organization,
         owner_user_id=acc.owner_user_id,
@@ -276,7 +280,7 @@ def create_account(
         resource_id=str(account.id),
         user_id=current_user.id,
         ip_address=request.client.host if request.client else None,
-        details=f"Created Emergent account {account.account_identifier} ({account.account_name}) with ownership {account.ownership_type}",
+        details=f"User {current_user.full_name} ({current_user.email}) added Emergent account {account.account_identifier} ({account.account_name}) with ownership {account.ownership_type}",
     )
 
     return _format_account_response(account, db)
