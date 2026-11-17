@@ -138,8 +138,8 @@ class AutonomousBrainService:
                 max_retries=3,
                 retry_policy=json.dumps({"backoff_factor": 2.0, "max_interval": 300}),
                 idempotency_key=f"idemp-{task_id_str}",
-                execution_adapter="MOCK_VIDEO_ADAPTER" if instruction.work_type == "VIDEO_CREATION" else "MOCK_WEB_ADAPTER",
-                is_mock=True,
+                execution_adapter="EMERGENT_BROWSER_ADAPTER" if instruction.work_type == "VIDEO_CREATION" else "MOCK_WEB_ADAPTER",
+                is_mock=False if instruction.work_type == "VIDEO_CREATION" else True,
                 checkpoints=json.dumps([]),
                 created_at=utcnow(),
                 updated_at=utcnow(),
@@ -156,39 +156,16 @@ class AutonomousBrainService:
         return existing_tasks + generated_tasks
 
     def _plan_video_creation_pipeline(self, instruction: AutonomousInstruction) -> List[Dict[str, Any]]:
-        """Video production pipeline breakdown."""
+        """Unified single-task video production pipeline for Emergent Studio (One-by-One sequential execution)."""
         return [
             {
-                "title": f"Video Script & Storyboard: {instruction.title}",
-                "description": f"Write engaging script and visual storyboard for video objective: {instruction.objective}",
-                "expected_result": "Structured 3-scene video script with pacing, scene breakdown, and visual prompts.",
+                "title": f"Video Production: {instruction.title}",
+                "description": f"Complete end-to-end video creation for: {instruction.objective or instruction.title}",
+                "expected_result": "Rendered, high-quality video deliverable generated via Emergent Studio with audio and visual pacing.",
                 "acceptance_criteria": [
-                    "Script includes hook, core message, and call-to-action",
-                    "Pacing matches requested duration",
-                    "Visual descriptions defined for all scenes",
-                ],
-                "priority": "HIGH",
-                "estimated_cost": "0.1500",
-            },
-            {
-                "title": f"Voiceover & Audio Design: {instruction.title}",
-                "description": f"Synthesize voiceover narration and audio cues for: {instruction.title}",
-                "expected_result": "Synchronized audio voice track at 48kHz with clean vocal clarity.",
-                "acceptance_criteria": [
-                    "Voice narration synchronized to scene durations",
-                    "Zero audio clipping or artifacts",
-                ],
-                "priority": "MEDIUM",
-                "estimated_cost": "0.1500",
-            },
-            {
-                "title": f"Video Render & Assembly: {instruction.title}",
-                "description": f"Render composite video frames and assemble final output for: {instruction.title}",
-                "expected_result": "1080p MP4 master video artifact with synchronized video and audio.",
-                "acceptance_criteria": [
-                    "Resolution 1920x1080 at 30fps",
-                    "Valid MP4 container",
-                    "Artifact generated at verified storage path",
+                    "Visual scenes match prompt and objective",
+                    "Continuous scene pacing and synchronized audio",
+                    "Final MP4 video generated and playable",
                 ],
                 "priority": "HIGH",
                 "estimated_cost": "0.2000",

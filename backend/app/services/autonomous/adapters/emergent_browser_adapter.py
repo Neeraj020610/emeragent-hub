@@ -495,6 +495,10 @@ async def _check_emergent_errors(page: Page) -> Optional[str]:
         "[role='dialog']:has-text('Purchase Credits')",
         "[role='dialog']:has-text('Buy Now')",
         "text=/Purchase Credits/i",
+        "text=/exhausted all your credits/i",
+        "text=/Ran out of credits/i",
+        "text=/0.00 credits remaining/i",
+        "text=/Out of credits/i",
     ]:
         try:
             el = page.locator(sel).first
@@ -502,6 +506,14 @@ async def _check_emergent_errors(page: Page) -> Optional[str]:
                 return "CREDITS_EXHAUSTED: Emergent 'Purchase Credits' popup displayed (Account credits depleted to 0.00)"
         except Exception:
             pass
+
+    # Live balance check: if scraped balance <= 0, trigger immediate failover
+    try:
+        curr_bal = await _scrape_credits_number(page)
+        if curr_bal is not None and curr_bal <= 0:
+            return f"CREDITS_EXHAUSTED: Live balance dropped to {curr_bal} credits."
+    except Exception:
+        pass
 
     # 2. Alert banners / toast errors
     for sel in [

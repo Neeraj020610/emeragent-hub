@@ -99,6 +99,13 @@ async def on_startup():
             sys_state.status = "RUNNING"
             sys_state.last_command = "START"
             db.commit()
+
+        # Cleanly reset any interrupted in-progress tasks from previous reboot
+        try:
+            from app.services.autonomous.worker_engine import AutonomousWorkerEngine
+            AutonomousWorkerEngine().recover_orphaned_tasks(db, timeout_minutes=0)
+        except Exception as e:
+            logger.warning(f"Startup task recovery note: {e}")
     finally:
         db.close()
     

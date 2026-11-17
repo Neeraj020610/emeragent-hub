@@ -18,7 +18,7 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
-from sqlalchemy import func, case
+from sqlalchemy import func, case, or_
 
 from app.models.account import EmergentAccount
 from app.models.session import AccountSession
@@ -139,14 +139,18 @@ class AutonomousWorkerEngine:
         orphaned = (
             db.query(AutonomousTask)
             .filter(
-                AutonomousTask.status == "IN_PROGRESS",
-                AutonomousTask.last_heartbeat_at < threshold,
+                AutonomousTask.status.in_(["IN_PROGRESS", "RUNNING"]),
+                or_(
+                    AutonomousTask.last_heartbeat_at < threshold,
+                    (AutonomousTask.last_heartbeat_at.is_(None) & (AutonomousTask.updated_at < threshold)),
+                    (AutonomousTask.last_heartbeat_at.is_(None) & AutonomousTask.updated_at.is_(None)),
+                ),
             )
             .all()
         )
         recovered_count = 0
         for task in orphaned:
-            logger.warning(f"Recovering orphaned task {task.task_identifier} (last heartbeat: {task.last_heartbeat_at})")
+            logger.warning(f"Recovering orphaned task {task.task_identifier} (last heartbeat: {task.last_heartbeat_at}, updated_at: {task.updated_at})")
             if task.assigned_account_id:
                 # Release active lock
                 budget = db.query(AccountCreditBudget).filter(AccountCreditBudget.account_id == task.assigned_account_id).first()
@@ -158,10 +162,13 @@ class AutonomousWorkerEngine:
                 task.status = "QUEUED"
                 task.error_classification = "CRASH_RECOVERY"
                 task.error_details = "Worker heartbeat timed out. Task reset to queue with retry."
+                task.last_heartbeat_at = None
+                task.updated_at = utcnow()
             else:
                 task.status = "FAILED"
                 task.error_classification = "MAX_RETRIES_EXCEEDED"
                 task.error_details = "Worker heartbeat timed out and max retries reached."
+                task.updated_at = utcnow()
 
             self._log_event(
                 task_id=task.id,
@@ -191,7 +198,10 @@ class AutonomousWorkerEngine:
             logger.debug(f"Worker engine idle: system is {system_state.status}")
             return None
 
-        # 1. Ensure single concurrent execution: If an Emergent task is already IN_PROGRESS, wait for it
+        # 1. Crash/Orphan Recovery: Recover any tasks whose worker died or heartbeat timed out
+        self.recover_orphaned_tasks(db, timeout_minutes=3)
+
+        # 2. Ensure single concurrent execution: If an Emergent task is actively IN_PROGRESS, wait for it
         active_task = (
             db.query(AutonomousTask)
             .filter(AutonomousTask.status.in_(["IN_PROGRESS", "RUNNING"]))
@@ -200,10 +210,7 @@ class AutonomousWorkerEngine:
         if active_task:
             return None
 
-        # Recover any timed-out tasks
-        self.recover_orphaned_tasks(db)
-
-        # 2. Resolve the Active Eligible Worker Account (with auto-failover if credits < 5)
+        # 3. Resolve the Active Eligible Worker Account (with auto-failover if credits < 5)
         account = get_or_failover_active_account(db)
         if not account:
             logger.warning("Worker engine: No active or standby account with available credits found in pool.")
