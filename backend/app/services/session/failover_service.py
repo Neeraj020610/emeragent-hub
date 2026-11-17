@@ -34,7 +34,18 @@ def enforce_single_active_account(active_account_id: int):
             act_acc.last_connected_at = now
             act_acc.updated_at = now
         act_sess = db.query(AccountSession).filter(AccountSession.account_id == active_account_id).first()
-        if act_sess:
+        if not act_sess:
+            import uuid
+            act_sess = AccountSession(
+                account_id=active_account_id,
+                session_token=f"sess-{uuid.uuid4().hex[:16]}",
+                auth_method="browser_profile",
+                session_status="ACTIVE",
+                reauth_required=False,
+                last_active_at=now,
+            )
+            db.add(act_sess)
+        else:
             act_sess.session_status = "ACTIVE"
             act_sess.reauth_required = False
             act_sess.reauth_reason = None
@@ -73,14 +84,10 @@ def get_or_failover_active_account(db) -> Optional[EmergentAccount]:
     """
     now = datetime.now(timezone.utc)
 
-    # 1. Check current connected and active account
+    # 1. Check current connected account
     active = (
         db.query(EmergentAccount)
-        .join(AccountSession, EmergentAccount.id == AccountSession.account_id)
-        .filter(
-            EmergentAccount.connection_status == "CONNECTED",
-            AccountSession.session_status == "ACTIVE",
-        )
+        .filter(EmergentAccount.connection_status == "CONNECTED")
         .first()
     )
 

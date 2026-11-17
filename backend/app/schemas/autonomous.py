@@ -145,7 +145,10 @@ class AccountCreditBudgetResponse(BaseModel):
     ineligibility_reason: Optional[str]
     universal_api_usage: Decimal
     platform_build_usage: Decimal
-    active_task_id: Optional[int]
+    active_task_id: Optional[int] = None
+    connection_status: Optional[str] = "STANDBY"
+    busy_with_user_name: Optional[str] = None
+    is_in_use: Optional[bool] = False
     created_at: datetime
     updated_at: datetime
 

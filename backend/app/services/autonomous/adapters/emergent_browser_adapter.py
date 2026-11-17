@@ -199,16 +199,14 @@ async def _save_task_screenshot(page: Page, task_identifier: str) -> str:
 
 async def _scrape_credits_number(page: Page) -> Optional[float]:
     try:
-        # 0. Check Studio Composer bottom bar / pill (e.g. "30.77 credits remaining" or "20.77 credits remaining")
+        # 0. Check Studio Composer bottom bar / pill (e.g. "30.77 credits remaining" or "-0.94 credits")
         try:
-            studio_badge = page.locator("*:has-text('credits remaining')").first
+            studio_badge = page.locator("*:has-text('credits remaining'), *:has-text('credits')").first
             if await studio_badge.is_visible(timeout=800):
                 txt = (await studio_badge.inner_text() or "").strip()
-                m_st = re.search(r'(\d+(?:\.\d+)?)\s*credits', txt, re.I)
+                m_st = re.search(r'(-?\d+(?:\.\d+)?)\s*credits', txt, re.I)
                 if m_st:
-                    val = float(m_st.group(1))
-                    if val >= 0:
-                        return val
+                    return float(m_st.group(1))
         except Exception:
             pass
 
@@ -281,8 +279,10 @@ async def _scrape_credits_number(page: Page) -> Optional[float]:
         except Exception:
             pass
 
-        body_txt = await page.evaluate("document.body.innerText")
-        m = re.search(r"(\d+\.\d+|\d+)\s+credits\b", body_txt, re.I)
+        body_txt = await page.evaluate("document.body.innerText || ''")
+        if any(ph in body_txt.lower() for ph in ("exhausted all your credits", "0.00 credits remaining", "ran out of credits")):
+            return 0.0
+        m = re.search(r"(-?\d+\.\d+|-?\d+)\s+credits\b", body_txt, re.I)
         if m:
             return float(m.group(1))
     except Exception:
@@ -392,17 +392,53 @@ def _is_valid_video_bytes(data: bytes, content_type: str = "") -> bool:
 
 
 async def _detect_emergent_video_asset(page: Page) -> Optional[str]:
-    """Finds a generated MP4/WebM video source URL (ignoring policy/landing/intro links)."""
+    """Finds a fully rendered MP4/WebM video source URL inside Emergent Studio."""
     try:
+        curr_url = (page.url or "").lower()
+        # Must be in an active chat/video workspace, not on /home or /landing
+        if "/chat" not in curr_url or "video=" not in curr_url:
+            return None
+
+        # Check if Director is still generating or interactive options are waiting
+        is_still_generating = await page.evaluate(
+            """() => {
+                const btns = Array.from(document.querySelectorAll('button'));
+                const hasActiveDirectorBtn = btns.some(b => {
+                    const t = (b.innerText || '').trim().toLowerCase();
+                    return ['skip', 'continue', 'approve', 'you decide', 'stop'].includes(t) && b.offsetParent !== null;
+                });
+                if (hasActiveDirectorBtn) return true;
+
+                const body = (document.body.innerText || '').toLowerCase();
+                if (body.includes('generating video') || body.includes('rendering scenes') || body.includes('writing script')) {
+                    return true;
+                }
+                return false;
+            }"""
+        )
+        if is_still_generating:
+            return None
+
         candidates = await page.evaluate(
             """() => {
                 const urls = [];
-                document.querySelectorAll('video, video source').forEach(v => {
-                    const src = v.currentSrc || v.src || v.getAttribute('src');
-                    if (src) urls.push({src, fromVideo: true});
-                });
+                // 1. Explicit Download button or direct MP4 link
                 document.querySelectorAll('a[download], a[href*=".mp4"], a[href*=".webm"]').forEach(a => {
-                    if (a.href) urls.push({src: a.href, fromVideo: false});
+                    const h = a.href || '';
+                    if (h && !h.includes('landing') && !h.includes('intro') && !h.includes('sample') && !h.includes('placeholder')) {
+                        urls.push({src: h, fromVideo: false});
+                    }
+                });
+                // 2. Completed HTML5 video tag with valid playback duration (> 3s)
+                document.querySelectorAll('video').forEach(v => {
+                    const src = v.currentSrc || v.src || v.getAttribute('src');
+                    if (src && !src.includes('landing') && !src.includes('intro') && !src.includes('sample') && !src.includes('placeholder')) {
+                        if (v.duration && v.duration > 3.0) {
+                            urls.push({src, fromVideo: true, duration: v.duration});
+                        } else if (src.startsWith('blob:') && (v.videoWidth >= 640 || v.duration > 0)) {
+                            urls.push({src, fromVideo: true, duration: v.duration || 0});
+                        }
+                    }
                 });
                 return urls;
             }"""
@@ -412,7 +448,7 @@ async def _detect_emergent_video_asset(page: Page) -> Optional[str]:
             low = u.lower()
             if not u:
                 continue
-            if any(bad in low for bad in ("landing", "intro", "hero", "showcase", "policy", "terms", "docs", "help")):
+            if any(bad in low for bad in ("landing", "intro", "hero", "showcase", "policy", "terms", "docs", "help", "placeholder", "template")):
                 continue
             if low.startswith("blob:") and item.get("fromVideo"):
                 return u
@@ -486,6 +522,15 @@ def _mark_account_exhausted_immediate(account_id: int, reason: str = "Credits De
 
 
 async def _check_emergent_errors(page: Page) -> Optional[str]:
+    # 0. Page text inspection: Check if Emergent chat reports credit exhaustion
+    try:
+        body_txt = await page.evaluate("document.body.innerText || ''")
+        low = body_txt.lower()
+        if any(k in low for k in ("exhausted all your credits", "0.00 credits remaining", "ran out of credits", "buy credits to continue")):
+            return "CREDITS_EXHAUSTED: Emergent reports zero/exhausted credits in chat window."
+    except Exception:
+        pass
+
     # 1. First priority: Check Purchase Credits modal / Insufficient credits modal
     for sel in [
         "h2:has-text('Purchase Credits')",
@@ -641,16 +686,19 @@ async def _execute_emergent_browser_workflow(
 
             # Select mode tab (Video vs Web app / Website) now that Home UI is mounted
             current_stage = f"Selecting Emergent mode tab ({work_type})"
-            tab_btn = page.locator(tab_sel).first
-            if await tab_btn.is_visible(timeout=5000):
-                await tab_btn.evaluate("e => e.scrollIntoView({block: 'center', inline: 'center'})")
-                await asyncio.sleep(0.3)
-                try:
-                    await tab_btn.click(timeout=5000)
-                except Exception:
-                    await _dismiss_emergent_overlays(page)
-                    await tab_btn.click(timeout=5000, force=True)
-                await asyncio.sleep(0.8)
+            try:
+                tab_btn = page.locator(tab_sel).first
+                if await tab_btn.is_visible(timeout=3000):
+                    await tab_btn.evaluate("e => e.scrollIntoView({block: 'center', inline: 'center'})")
+                    await asyncio.sleep(0.3)
+                    try:
+                        await tab_btn.click(timeout=3000)
+                    except Exception:
+                        await _dismiss_emergent_overlays(page)
+                        await tab_btn.click(timeout=3000, force=True)
+                    await asyncio.sleep(0.8)
+            except Exception as tab_err:
+                logger.debug(f"Tab selection note: {tab_err}")
 
             # Enter prompt into Emergent composer & submit
             await _save_task_screenshot(page, task_identifier)
@@ -869,6 +917,16 @@ async def _execute_emergent_browser_workflow(
                                 ct = resp.headers.get("content-type", "")
                                 raw_bytes = await resp.body()
                         if _is_valid_video_bytes(raw_bytes, ct):
+                            if len(raw_bytes) < 1_000_000:
+                                # Template/placeholder videos on Emergent are ~324KB. Real user render is > 1MB (typically 5MB-35MB).
+                                _append_task_log(
+                                    task_id,
+                                    f"Video candidate detected but size ({len(raw_bytes) // 1024} KB) is under 1MB (placeholder/partial). Continuing to wait for full render...",
+                                    step="WAITING_FOR_FULL_RENDER",
+                                    level="INFO",
+                                )
+                                continue
+
                             with open(local_mp4, "wb") as f:
                                 f.write(raw_bytes)
                             downloaded_video_path = local_mp4

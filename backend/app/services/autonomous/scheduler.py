@@ -140,9 +140,30 @@ class AccountCreditScheduler:
             return False, budget.ineligibility_reason
 
         session = db.query(AccountSession).filter(AccountSession.account_id == budget.account_id).first()
-        if not session or session.session_status not in ("ACTIVE", "STANDBY"):
+        if not session:
+            # If account is CONNECTED or in STANDBY pool, auto-provision session record so it can receive tasks
+            if account.connection_status in ("CONNECTED", "STANDBY"):
+                import uuid
+                session = AccountSession(
+                    account_id=budget.account_id,
+                    session_token=f"sess-{uuid.uuid4().hex[:16]}",
+                    auth_method="browser_profile",
+                    session_status="STANDBY" if account.connection_status == "STANDBY" else "ACTIVE",
+                    reauth_required=False,
+                )
+                db.add(session)
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+            else:
+                budget.is_eligible = False
+                budget.ineligibility_reason = f"Session is MISSING"
+                return False, budget.ineligibility_reason
+
+        if session and session.session_status not in ("ACTIVE", "STANDBY"):
             budget.is_eligible = False
-            budget.ineligibility_reason = f"Session is {session.session_status if session else 'MISSING'}"
+            budget.ineligibility_reason = f"Session is {session.session_status}"
             return False, budget.ineligibility_reason
 
         MIN_USABLE_CREDITS = Decimal("5.0")
@@ -355,10 +376,19 @@ class AccountCreditScheduler:
             current_committed = budget.credit_usage + budget.reserved_credits
             remaining = max(Decimal("0.0000"), ceiling_limit - current_committed)
 
+            in_use = bool(
+                budget.active_task_id is not None
+                or acc.busy_with_user_name is not None
+                or acc.connection_status == "CONNECTED"
+            )
+
             results.append({
                 "id": budget.id,
                 "account_id": acc.id,
                 "account_name": acc.account_name,
+                "connection_status": acc.connection_status,
+                "busy_with_user_name": acc.busy_with_user_name,
+                "is_in_use": in_use,
                 "starting_balance": budget.starting_balance,
                 "verified_current_balance": budget.verified_current_balance,
                 "credit_usage": budget.credit_usage,

@@ -41,6 +41,9 @@ import {
   Download,
   Volume2,
   ShieldAlert,
+  ChevronDown,
+  ChevronUp,
+  Users,
 } from "lucide-react";
 
 function renderInlineMarkdown(text: string): React.ReactNode[] {
@@ -127,6 +130,9 @@ interface AccountBudget {
   id: number;
   account_id: number;
   account_name: string;
+  connection_status?: string;
+  busy_with_user_name?: string;
+  is_in_use?: boolean;
   starting_balance: string;
   verified_current_balance: string;
   credit_usage: string;
@@ -256,6 +262,7 @@ function BuildsContent() {
   // --- Worker State ---
   const [systemState, setSystemState] = useState<SystemState | null>(null);
   const [budgets, setBudgets] = useState<AccountBudget[]>([]);
+  const [showStandbyPool, setShowStandbyPool] = useState(false);
   const [tasks, setTasks] = useState<AutonomousTask[]>([]);
   const [instructions, setInstructions] = useState<AutonomousInstruction[]>([]);
   
@@ -793,93 +800,205 @@ function BuildsContent() {
             </div>
           </div>
 
-          {/* Multi-Account 100% Pool Hot-Swapping & Budgets */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <TrendingUp className="w-5 h-5 text-teal-600" />
-                  Single Active Account Pool & Hot-Swapping
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Full 100% credit burn on single active worker with automatic zero-credit failover to standby queue.
-                </p>
-              </div>
-              <button
-                onClick={fetchWorkerData}
-                className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1 transition-colors"
-              >
-                <RefreshCw className="w-3.5 h-3.5" /> Sync
-              </button>
-            </div>
+          {/* Active Dedicated Worker (Currently In Use) */}
+          {(() => {
+            const activeTaskAccountIds = new Set(
+              tasks.filter((t) => t.status === "IN_PROGRESS" && t.assigned_account_id).map((t) => t.assigned_account_id)
+            );
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {budgets.map((b) => {
-                const startBal = parseFloat(b.starting_balance) || 0;
-                const ceilingLimit = parseFloat(b.planned_ceiling_limit) || 0;
-                const usage = parseFloat(b.credit_usage) || 0;
-                const reserved = parseFloat(b.reserved_credits) || 0;
-                const committed = usage + reserved;
-                const pct = ceilingLimit > 0 ? Math.min(100, Math.round((committed / ceilingLimit) * 100)) : 0;
+            const inUseBudgets = budgets.filter(
+              (b) =>
+                activeTaskAccountIds.has(b.account_id) ||
+                b.active_task_id != null ||
+                b.is_in_use ||
+                b.busy_with_user_name != null ||
+                b.connection_status === "CONNECTED"
+            );
 
-                return (
-                  <div
-                    key={b.id}
-                    className={`p-4 rounded-xl border space-y-3 ${
-                      b.is_eligible ? "bg-slate-50/50 border-slate-200" : "bg-rose-50/40 border-rose-200"
-                    }`}
+            // Show active accounts; if none is running, show the 1 primary ready worker
+            const displayActiveBudgets = inUseBudgets.length > 0
+              ? inUseBudgets
+              : budgets.filter((b) => b.is_eligible).slice(0, 1);
+
+            const standbyBudgets = budgets.filter((b) => !displayActiveBudgets.some((ab) => ab.id === b.id));
+
+            return (
+              <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                      <TrendingUp className="w-5 h-5 text-emerald-600" />
+                      Active Dedicated Worker (Currently In Use)
+                      <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        {displayActiveBudgets.length} Active {displayActiveBudgets.length === 1 ? "Worker" : "Workers"}
+                      </span>
+                    </h2>
+                    <p className="text-xs text-slate-500">
+                      Real-time isolated worker account executing prompts. Standby pool auto-activates when needed.
+                    </p>
+                  </div>
+                  <button
+                    onClick={fetchWorkerData}
+                    className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1 transition-colors"
                   >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <div className="font-bold text-slate-900 truncate max-w-[170px]">{b.account_name}</div>
-                        <div className="text-[11px] text-slate-500 font-mono">Src: {b.balance_source}</div>
-                      </div>
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          b.is_eligible
-                            ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
-                            : b.ineligibility_reason === "Ceiling Reached"
-                            ? "bg-rose-100 text-rose-800 border border-rose-300"
-                            : "bg-amber-100 text-amber-800 border border-amber-300"
+                    <RefreshCw className="w-3.5 h-3.5" /> Sync
+                  </button>
+                </div>
+
+                {/* Grid of only currently in-use accounts */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {displayActiveBudgets.map((b) => {
+                    const startBal = parseFloat(b.starting_balance) || 0;
+                    const ceilingLimit = parseFloat(b.planned_ceiling_limit) || 0;
+                    const usage = parseFloat(b.credit_usage) || 0;
+                    const reserved = parseFloat(b.reserved_credits) || 0;
+                    const committed = usage + reserved;
+                    const pct = ceilingLimit > 0 ? Math.min(100, Math.round((committed / ceilingLimit) * 100)) : 0;
+                    
+                    const runningTask = tasks.find(
+                      (t) => t.assigned_account_id === b.account_id && t.status === "IN_PROGRESS"
+                    );
+
+                    const isCurrentlyExecuting = !!runningTask || b.active_task_id != null;
+
+                    return (
+                      <div
+                        key={b.id}
+                        className={`p-4 rounded-xl border space-y-3 transition-all ${
+                          isCurrentlyExecuting
+                            ? "bg-emerald-50/40 border-emerald-300 ring-2 ring-emerald-500/20 shadow-sm"
+                            : b.is_eligible
+                            ? "bg-slate-50/70 border-slate-200"
+                            : "bg-rose-50/40 border-rose-200"
                         }`}
                       >
-                        {b.is_eligible ? "Eligible" : b.ineligibility_reason || "Ineligible"}
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="relative flex h-2.5 w-2.5">
+                                {isCurrentlyExecuting && (
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                )}
+                                <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${isCurrentlyExecuting ? "bg-emerald-500" : "bg-slate-400"}`}></span>
+                              </span>
+                              <div className="font-bold text-slate-900 truncate max-w-[150px]">{b.account_name}</div>
+                            </div>
+                            <div className="text-[11px] text-slate-500 font-mono mt-0.5">Src: {b.balance_source}</div>
+                          </div>
+
+                          <div className="flex flex-col items-end gap-1">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 ${
+                                isCurrentlyExecuting
+                                  ? "bg-emerald-600 text-white shadow-xs"
+                                  : b.is_eligible
+                                  ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
+                                  : "bg-amber-100 text-amber-800 border border-amber-300"
+                              }`}
+                            >
+                              {isCurrentlyExecuting ? "In Use" : b.is_eligible ? "Ready" : b.ineligibility_reason || "Standby"}
+                            </span>
+                            {b.busy_with_user_name && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-purple-100 text-purple-700 border border-purple-200 flex items-center gap-1">
+                                <Users className="w-2.5 h-2.5" />
+                                {b.busy_with_user_name}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Running Task info banner if actively executing */}
+                        {runningTask && (
+                          <div className="p-2 rounded-lg bg-emerald-100/70 border border-emerald-200/80 text-[11px] text-emerald-900 space-y-0.5">
+                            <div className="font-semibold truncate flex items-center gap-1">
+                              <Activity className="w-3 h-3 text-emerald-600 animate-spin" />
+                              <span>{runningTask.title}</span>
+                            </div>
+                            <div className="text-[10px] text-emerald-700 font-mono">{runningTask.task_identifier}</div>
+                          </div>
+                        )}
+
+                        <div>
+                          <div className="flex justify-between text-xs text-slate-600 mb-1">
+                            <span>Pool Utilization</span>
+                            <span className="font-bold text-slate-900">
+                              ${committed.toFixed(3)} / ${ceilingLimit.toFixed(3)} ({pct}%)
+                            </span>
+                          </div>
+                          <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full transition-all duration-500 ${
+                                pct >= 100 ? "bg-rose-500" : pct > 75 ? "bg-amber-500" : "bg-emerald-600"
+                              }`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-200/80 text-slate-600">
+                          <div>
+                            Start: <span className="font-mono text-slate-800">${startBal.toFixed(2)}</span>
+                          </div>
+                          <div>
+                            Headroom:{" "}
+                            <span className="font-mono text-emerald-600 font-bold">
+                              ${parseFloat(b.remaining_eligible_budget).toFixed(2)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Collapsible Standby Pool Toggle */}
+                {standbyBudgets.length > 0 && (
+                  <div className="pt-2 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setShowStandbyPool(!showStandbyPool)}
+                      className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1.5 font-medium transition-colors cursor-pointer py-1"
+                    >
+                      {showStandbyPool ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      <span>
+                        {showStandbyPool ? "Hide" : "Show"} Standby Pool ({standbyBudgets.length} accounts in standby queue)
                       </span>
-                    </div>
+                    </button>
 
-                    <div>
-                      <div className="flex justify-between text-xs text-slate-600 mb-1">
-                        <span>Pool Utilization</span>
-                        <span className="font-bold text-slate-900">
-                          ${committed.toFixed(3)} / ${ceilingLimit.toFixed(3)} ({pct}%)
-                        </span>
-                      </div>
-                      <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full transition-all duration-500 ${
-                            pct >= 100 ? "bg-rose-500" : pct > 75 ? "bg-amber-500" : "bg-blue-600"
-                          }`}
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    </div>
+                    {showStandbyPool && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mt-3 pt-3 border-t border-dashed border-slate-200">
+                        {standbyBudgets.map((b) => {
+                          const ceilingLimit = parseFloat(b.planned_ceiling_limit) || 0;
+                          const usage = parseFloat(b.credit_usage) || 0;
+                          const reserved = parseFloat(b.reserved_credits) || 0;
+                          const committed = usage + reserved;
+                          const pct = ceilingLimit > 0 ? Math.min(100, Math.round((committed / ceilingLimit) * 100)) : 0;
 
-                    <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-200/80 text-slate-600">
-                      <div>
-                        Start: <span className="font-mono text-slate-800">${startBal.toFixed(2)}</span>
+                          return (
+                            <div
+                              key={b.id}
+                              className="p-3 rounded-lg border border-slate-200 bg-slate-50/50 text-xs space-y-2 opacity-85 hover:opacity-100 transition-opacity"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-semibold text-slate-800 truncate">{b.account_name}</span>
+                                <span className="text-[10px] text-slate-500 bg-slate-200/70 px-1.5 py-0.2 rounded font-sans">
+                                  Standby
+                                </span>
+                              </div>
+                              <div className="flex justify-between text-[11px] text-slate-500">
+                                <span>Rem: ${parseFloat(b.remaining_eligible_budget).toFixed(2)}</span>
+                                <span>{pct}%</span>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                      <div>
-                        Headroom:{" "}
-                        <span className="font-mono text-emerald-600 font-bold">
-                          ${parseFloat(b.remaining_eligible_budget).toFixed(2)}
-                        </span>
-                      </div>
-                    </div>
+                    )}
                   </div>
-                );
-              })}
-            </div>
-          </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Autonomous Tasks Execution Queue */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-3">
