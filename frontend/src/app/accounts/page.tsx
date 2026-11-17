@@ -35,6 +35,10 @@ import {
   Radio,
   Clock,
   Layers,
+  Flame,
+  Coins,
+  LogIn,
+  Hourglass,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -138,6 +142,9 @@ function AccountsContent() {
   // --- Directory State ---
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [accountFilterCategory, setAccountFilterCategory] = useState<
+    "ALL" | "ACTIVE" | "STANDBY" | "LOGIN_REQUIRED" | "EXHAUSTED"
+  >("ALL");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [accountToDelete, setAccountToDelete] = useState<AccountItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -612,13 +619,6 @@ function AccountsContent() {
     }
   };
 
-  const filteredAccounts = accounts.filter(
-    (a) =>
-      a.account_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      a.account_identifier.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (a.email && a.email.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
-
   const MIN_USABLE_CREDITS = 5.0;
 
   // Strict Active Worker: Account must have at least 5 usable credits
@@ -660,6 +660,48 @@ function AccountsContent() {
   const standbyQueueMap: Record<number, number> = {};
   standbyAccounts.forEach((a, idx) => {
     standbyQueueMap[a.id] = idx + 1;
+  });
+
+  // Category Classification Helpers
+  const isAccountActiveWorker = (a: AccountItem) => a.id === activeWorkerId;
+  const isAccountInStandby = (a: AccountItem) => a.id !== activeWorkerId && standbyQueueMap[a.id] !== undefined;
+  const isAccountExhausted = (a: AccountItem) => {
+    const s = (a.connection_status || "").toUpperCase();
+    const bal = a.latest_credit_balance !== null && a.latest_credit_balance !== undefined ? Number(a.latest_credit_balance) : null;
+    return (
+      s === "EXHAUSTED" ||
+      s === "CREDITS_FINISHED" ||
+      (bal !== null && bal < MIN_USABLE_CREDITS && (s === "CONNECTED" || s === "STANDBY" || s === "ACTIVE" || s === "EXHAUSTED"))
+    );
+  };
+  const isAccountLoginRequired = (a: AccountItem) => {
+    return !isAccountActiveWorker(a) && !isAccountInStandby(a) && !isAccountExhausted(a);
+  };
+
+  const activeWorkerAccount = accounts.find(isAccountActiveWorker) || null;
+  const activeWorkerCount = activeWorkerAccount ? 1 : 0;
+  const standbyCount = accounts.filter(isAccountInStandby).length;
+  const exhaustedCount = accounts.filter(isAccountExhausted).length;
+  const loginRequiredCount = accounts.filter(isAccountLoginRequired).length;
+  const standbyCreditsTotal = accounts
+    .filter(isAccountInStandby)
+    .reduce((sum, a) => sum + Number(a.latest_credit_balance || 0), 0);
+
+  const filteredAccounts = accounts.filter((a) => {
+    // 1. Category Filter
+    if (accountFilterCategory === "ACTIVE" && !isAccountActiveWorker(a)) return false;
+    if (accountFilterCategory === "STANDBY" && !isAccountInStandby(a)) return false;
+    if (accountFilterCategory === "LOGIN_REQUIRED" && !isAccountLoginRequired(a)) return false;
+    if (accountFilterCategory === "EXHAUSTED" && !isAccountExhausted(a)) return false;
+
+    // 2. Search Query
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      a.account_name.toLowerCase().includes(q) ||
+      a.account_identifier.toLowerCase().includes(q) ||
+      (a.email && a.email.toLowerCase().includes(q))
+    );
   });
 
   const renderConnectionBadge = (itemOrStatus: AccountItem | string) => {
@@ -869,23 +911,255 @@ function AccountsContent() {
       {/* ========================================================= */}
       {activeTab === "directory" && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between gap-4">
-            <div className="relative flex-1 max-w-md">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              <input
-                type="text"
-                placeholder="Search by account name, identifier or email..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-white border border-slate-200 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-500"
-              />
-            </div>
-            <button
-              onClick={loadAccounts}
-              className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1"
+          {/* Categorized Operational Metric Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* 1. Active Worker Card */}
+            <div
+              onClick={() => setAccountFilterCategory(accountFilterCategory === "ACTIVE" ? "ALL" : "ACTIVE")}
+              className={`p-3.5 rounded-xl border transition-all cursor-pointer relative overflow-hidden ${
+                accountFilterCategory === "ACTIVE"
+                  ? "border-emerald-500 bg-emerald-50/90 shadow-sm ring-2 ring-emerald-500/20"
+                  : "border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/30"
+              }`}
             >
-              <RefreshCw className="w-3.5 h-3.5" /> Refresh
-            </button>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
+                  <Flame className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
+                  Active Worker
+                </span>
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                  Live ({activeWorkerCount})
+                </span>
+              </div>
+              <div className="text-base font-extrabold text-slate-900 truncate">
+                {activeWorkerAccount ? activeWorkerAccount.account_name : "No Active Account"}
+              </div>
+              <div className="text-xs font-mono font-bold text-emerald-700 mt-0.5">
+                {activeWorkerAccount && activeWorkerAccount.latest_credit_balance !== null
+                  ? `${Number(activeWorkerAccount.latest_credit_balance).toLocaleString()} Credits`
+                  : "0 Credits"}
+              </div>
+              <div className="text-[11px] text-slate-500 mt-1 flex items-center justify-between">
+                <span>Single worker burning credits</span>
+                <span className="text-[10px] font-semibold text-emerald-700 underline">
+                  {accountFilterCategory === "ACTIVE" ? "Filtered" : "Filter"}
+                </span>
+              </div>
+            </div>
+
+            {/* 2. Standby Queue Card */}
+            <div
+              onClick={() => setAccountFilterCategory(accountFilterCategory === "STANDBY" ? "ALL" : "STANDBY")}
+              className={`p-3.5 rounded-xl border transition-all cursor-pointer relative overflow-hidden ${
+                accountFilterCategory === "STANDBY"
+                  ? "border-blue-500 bg-blue-50/90 shadow-sm ring-2 ring-blue-500/20"
+                  : "border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/30"
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-800 flex items-center gap-1.5">
+                  <Hourglass className="w-3.5 h-3.5 text-blue-600" />
+                  Standby Queue
+                </span>
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-300">
+                  {standbyCount} In Queue
+                </span>
+              </div>
+              <div className="text-base font-extrabold text-slate-900">
+                {standbyCount} Accounts Ready
+              </div>
+              <div className="text-xs font-mono font-bold text-blue-700 mt-0.5">
+                {standbyCreditsTotal.toLocaleString()} Pooled Credits
+              </div>
+              <div className="text-[11px] text-slate-500 mt-1 flex items-center justify-between">
+                <span>FIFO failover pool (≥ 5.0 Cr)</span>
+                <span className="text-[10px] font-semibold text-blue-700 underline">
+                  {accountFilterCategory === "STANDBY" ? "Filtered" : "Filter"}
+                </span>
+              </div>
+            </div>
+
+            {/* 3. Login Required Card */}
+            <div
+              onClick={() => setAccountFilterCategory(accountFilterCategory === "LOGIN_REQUIRED" ? "ALL" : "LOGIN_REQUIRED")}
+              className={`p-3.5 rounded-xl border transition-all cursor-pointer relative overflow-hidden ${
+                accountFilterCategory === "LOGIN_REQUIRED"
+                  ? "border-amber-500 bg-amber-50/90 shadow-sm ring-2 ring-amber-500/20"
+                  : "border-slate-200 bg-white hover:border-amber-300 hover:bg-amber-50/30"
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
+                  <LogIn className="w-3.5 h-3.5 text-amber-600" />
+                  Login Required
+                </span>
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                  {loginRequiredCount} Accounts
+                </span>
+              </div>
+              <div className="text-base font-extrabold text-slate-900">
+                {loginRequiredCount} Need Sign In
+              </div>
+              <div className="text-xs text-amber-700 mt-0.5 font-medium">
+                Auth / OTP Required
+              </div>
+              <div className="text-[11px] text-slate-500 mt-1 flex items-center justify-between">
+                <span>Disconnected or pending login</span>
+                <span className="text-[10px] font-semibold text-amber-700 underline">
+                  {accountFilterCategory === "LOGIN_REQUIRED" ? "Filtered" : "Filter"}
+                </span>
+              </div>
+            </div>
+
+            {/* 4. Exhausted Credits Card */}
+            <div
+              onClick={() => setAccountFilterCategory(accountFilterCategory === "EXHAUSTED" ? "ALL" : "EXHAUSTED")}
+              className={`p-3.5 rounded-xl border transition-all cursor-pointer relative overflow-hidden ${
+                accountFilterCategory === "EXHAUSTED"
+                  ? "border-rose-400 bg-rose-50/90 shadow-sm ring-2 ring-rose-400/20"
+                  : "border-slate-200 bg-white hover:border-rose-300 hover:bg-rose-50/30"
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-rose-800 flex items-center gap-1.5">
+                  <Coins className="w-3.5 h-3.5 text-rose-600" />
+                  Credits Exhausted
+                </span>
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                  {exhaustedCount} Accounts
+                </span>
+              </div>
+              <div className="text-base font-extrabold text-slate-900">
+                {exhaustedCount} Depleted
+              </div>
+              <div className="text-xs text-rose-700 mt-0.5 font-medium">
+                &lt; 5.0 Credits Remaining
+              </div>
+              <div className="text-[11px] text-slate-500 mt-1 flex items-center justify-between">
+                <span>Rotated out automatically</span>
+                <span className="text-[10px] font-semibold text-rose-700 underline">
+                  {accountFilterCategory === "EXHAUSTED" ? "Filtered" : "Filter"}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Interactive Filter Pills & Search Bar */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200">
+            {/* Section Filter Pills */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setAccountFilterCategory("ALL")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  accountFilterCategory === "ALL"
+                    ? "bg-slate-900 text-white shadow-xs"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900"
+                }`}
+              >
+                All Accounts
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-semibold ${
+                  accountFilterCategory === "ALL" ? "bg-slate-700 text-white" : "bg-white text-slate-600"
+                }`}>
+                  {accounts.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAccountFilterCategory("ACTIVE")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  accountFilterCategory === "ACTIVE"
+                    ? "bg-emerald-600 text-white shadow-xs"
+                    : "bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100"
+                }`}
+              >
+                <Flame className="w-3.5 h-3.5" />
+                Active Worker
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-semibold ${
+                  accountFilterCategory === "ACTIVE" ? "bg-emerald-800 text-white" : "bg-emerald-200 text-emerald-900"
+                }`}>
+                  {activeWorkerCount}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAccountFilterCategory("STANDBY")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  accountFilterCategory === "STANDBY"
+                    ? "bg-blue-600 text-white shadow-xs"
+                    : "bg-blue-50 text-blue-800 border border-blue-200 hover:bg-blue-100"
+                }`}
+              >
+                <Hourglass className="w-3.5 h-3.5" />
+                Standby Queue
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-semibold ${
+                  accountFilterCategory === "STANDBY" ? "bg-blue-800 text-white" : "bg-blue-200 text-blue-900"
+                }`}>
+                  {standbyCount}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAccountFilterCategory("LOGIN_REQUIRED")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  accountFilterCategory === "LOGIN_REQUIRED"
+                    ? "bg-amber-600 text-white shadow-xs"
+                    : "bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100"
+                }`}
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                Login Required
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-semibold ${
+                  accountFilterCategory === "LOGIN_REQUIRED" ? "bg-amber-800 text-white" : "bg-amber-200 text-amber-900"
+                }`}>
+                  {loginRequiredCount}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAccountFilterCategory("EXHAUSTED")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  accountFilterCategory === "EXHAUSTED"
+                    ? "bg-rose-600 text-white shadow-xs"
+                    : "bg-rose-50 text-rose-800 border border-rose-200 hover:bg-rose-100"
+                }`}
+              >
+                <Coins className="w-3.5 h-3.5" />
+                Credits Exhausted
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-semibold ${
+                  accountFilterCategory === "EXHAUSTED" ? "bg-rose-800 text-white" : "bg-rose-200 text-rose-900"
+                }`}>
+                  {exhaustedCount}
+                </span>
+              </button>
+            </div>
+
+            {/* Search and Refresh */}
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1 md:w-64">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Filter by name, ID or email..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors"
+                />
+              </div>
+              <button
+                onClick={loadAccounts}
+                className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-50 flex items-center gap-1.5 transition-colors"
+                title="Reload accounts"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Refresh</span>
+              </button>
+            </div>
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
@@ -907,18 +1181,57 @@ function AccountsContent() {
                     <td colSpan={7} className="py-12 text-center text-slate-400">
                       <div className="max-w-xs mx-auto space-y-2">
                         <Server className="w-8 h-8 mx-auto text-slate-300" />
-                        <div className="font-semibold text-slate-700">No accounts registered yet</div>
+                        <div className="font-semibold text-slate-700">
+                          {accountFilterCategory === "ACTIVE"
+                            ? "No Active Worker Account"
+                            : accountFilterCategory === "STANDBY"
+                            ? "No Accounts in Standby Queue"
+                            : accountFilterCategory === "LOGIN_REQUIRED"
+                            ? "No Accounts Need Login"
+                            : accountFilterCategory === "EXHAUSTED"
+                            ? "No Accounts With Exhausted Credits"
+                            : "No accounts found"}
+                        </div>
                         <p className="text-[11px] text-slate-500">
-                          {isExecutive
-                            ? "You haven't added any accounts yet. Click '+ Add Account' above to onboard your first Emergent account!"
-                            : "Click '+ Add Account' above to register your first Emergent account."}
+                          {searchQuery
+                            ? "Try adjusting your search criteria or clear the search query."
+                            : accountFilterCategory !== "ALL"
+                            ? `No accounts currently match the ${accountFilterCategory.replace("_", " ").toLowerCase()} section filter.`
+                            : "No accounts registered yet."}
                         </p>
+                        {accountFilterCategory !== "ALL" && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAccountFilterCategory("ALL");
+                              setSearchQuery("");
+                            }}
+                            className="mt-2 px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700 transition-colors"
+                          >
+                            View All Accounts
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
                 ) : (
-                  filteredAccounts.map((acc) => (
-                  <tr key={acc.id} className="hover:bg-slate-50/60">
+                  filteredAccounts.map((acc) => {
+                    const isActive = isAccountActiveWorker(acc);
+                    const isStandby = isAccountInStandby(acc);
+                    const isExhausted = isAccountExhausted(acc);
+                    return (
+                      <tr
+                        key={acc.id}
+                        className={`transition-colors ${
+                          isActive
+                            ? "bg-emerald-50/70 hover:bg-emerald-50/90 border-l-4 border-l-emerald-500"
+                            : isStandby
+                            ? "hover:bg-blue-50/40"
+                            : isExhausted
+                            ? "opacity-90 hover:bg-slate-50/80 bg-slate-50/30"
+                            : "hover:bg-slate-50/60"
+                        }`}
+                      >
                     <td className="px-4 py-3">
                       <div className="font-bold text-slate-900">{acc.account_name}</div>
                       <div className="text-[11px] text-slate-500">{acc.email || "No email assigned"}</div>
@@ -997,8 +1310,9 @@ function AccountsContent() {
                         )}
                       </div>
                     </td>
-                  </tr>
-                )))}
+                    </tr>
+                  );
+                }))}
               </tbody>
             </table>
           </div>
