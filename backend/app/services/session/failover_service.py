@@ -65,6 +65,74 @@ def enforce_single_active_account(active_account_id: int):
         db.close()
 
 
+def get_or_failover_active_account(db) -> Optional[EmergentAccount]:
+    """
+    Returns the single currently active account with credits >= 5.0.
+    If the active account is missing or has < 5.0 credits, automatically promotes
+    the next eligible standby account with >= 5.0 credits immediately.
+    """
+    now = datetime.now(timezone.utc)
+
+    # 1. Check current connected and active account
+    active = (
+        db.query(EmergentAccount)
+        .join(AccountSession, EmergentAccount.id == AccountSession.account_id)
+        .filter(
+            EmergentAccount.connection_status == "CONNECTED",
+            AccountSession.session_status == "ACTIVE",
+        )
+        .first()
+    )
+
+    if active:
+        latest_snap = (
+            db.query(CreditSnapshot)
+            .filter(CreditSnapshot.account_id == active.id)
+            .order_by(CreditSnapshot.id.desc())
+            .first()
+        )
+        if latest_snap and latest_snap.available_credits is not None and latest_snap.available_credits >= MIN_USABLE_CREDITS:
+            return active
+        else:
+            logger.info(f"Active account '{active.account_name}' ({active.id}) credits depleted (< 5.0 Cr). Marking EXHAUSTED and failing over to next standby.")
+            active.connection_status = "EXHAUSTED"
+            active.updated_at = now
+            sess = db.query(AccountSession).filter(AccountSession.account_id == active.id).first()
+            if sess:
+                sess.session_status = "EXPIRED"
+                sess.reauth_required = True
+                sess.reauth_reason = "Credits depleted (< 5 Cr). Auto-switched to next standby."
+                sess.updated_at = now
+            db.commit()
+
+    # 2. Find next eligible account in STANDBY with >= 5.0 credits
+    standbys = (
+        db.query(EmergentAccount)
+        .filter(EmergentAccount.connection_status == "STANDBY")
+        .order_by(EmergentAccount.id.asc())
+        .all()
+    )
+
+    for cand in standbys:
+        snap = (
+            db.query(CreditSnapshot)
+            .filter(CreditSnapshot.account_id == cand.id)
+            .order_by(CreditSnapshot.id.desc())
+            .first()
+        )
+        if snap and snap.available_credits is not None and snap.available_credits < MIN_USABLE_CREDITS:
+            continue
+
+        # Promote candidate directly to single active worker
+        enforce_single_active_account(cand.id)
+        db.refresh(cand)
+        logger.info(f"Auto-Failover SUCCESS: Promoted Standby Account #{cand.id} ({cand.account_name}) with {snap.available_credits if snap else 110} Cr to ACTIVE Worker.")
+        return cand
+
+    logger.warning("No standby accounts with >= 5.0 credits found in pool.")
+    return None
+
+
 def handle_account_logged_in(account_id: int):
     """
     Enforces that an already ACTIVE account with positive credits is NEVER preempted:

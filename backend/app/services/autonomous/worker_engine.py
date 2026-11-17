@@ -28,6 +28,10 @@ from app.models.autonomous import (
     AutonomousSystemState,
     AccountCreditBudget,
 )
+from app.models.credit import CreditSnapshot
+from app.models.chat import Conversation
+from app.services.session.failover_service import get_or_failover_active_account
+from app.services.autonomous.adapters.emergent_browser_adapter import schedule_emergent_browser_task
 from app.services.autonomous.brain import AutonomousBrainService
 from app.services.autonomous.scheduler import AccountCreditScheduler
 from app.services.autonomous.adapters.video_adapter import MockVideoExecutionAdapter
@@ -35,6 +39,57 @@ from app.services.autonomous.adapters.webapp_adapter import MockWebAppExecutionA
 from app.services.autonomous.adapters.base import BaseAutonomousAdapter, StepResult
 
 logger = logging.getLogger("emergent.autonomous.worker_engine")
+
+CREATIVE_PROMPT_POOL = [
+    {
+        "title": "Futuristic Cyberpunk Metropolis with Flying Vehicles",
+        "prompt": "Create an ultra-high quality cinematic 30-second video of a futuristic cyberpunk mega-city at dusk. Towering neon skyscrapers with holographic billboards, sleek flying anti-gravity cars and aero-taxis navigating between sky bridges, continuous smooth camera tracking following a high-speed vehicle through illuminated city canyons, immersive ambient city sounds and electronic synth score.",
+    },
+    {
+        "title": "Ancient Roman Colosseum Gladiator Showdown",
+        "prompt": "Create a dramatic 30-second cinematic video of an ancient Roman amphitheater during golden hour. Dust swirling across the arena sands, two armored gladiators in dynamic combat pose, massive cheering crowds in the colosseum stands, epic brass and percussion orchestral soundtrack.",
+    },
+    {
+        "title": "Deep Sea Bioluminescent Creature Expedition",
+        "prompt": "Create a breathtaking 30-second underwater cinematic exploration video. A deep-sea research submarine descending into the abyss, illuminating glowing bioluminescent jellyfish and undiscovered deep-ocean marine life, subtle hydro-acoustic audio and serene atmospheric score.",
+    },
+    {
+        "title": "Mars Human Colony First Terraforming Dome",
+        "prompt": "Create a photorealistic 30-second video of humanity's first self-sustaining colony on Mars. Red planet landscape with solar arrays, pressurized glass geodesic biodomes, robotic rovers traversing rust-red dunes against Olympus Mons at sunset, inspiring orchestral cinematic music.",
+    },
+    {
+        "title": "Samurai Duel in Cherry Blossom Storm",
+        "prompt": "Create a high-octane 30-second anime-inspired cinematic video of a lone samurai with a katana standing on a misty temple bridge during a swirling pink cherry blossom storm, wind blowing robes, lightning flash, authentic Japanese koto and cinematic taiko drum beat.",
+    },
+    {
+        "title": "Supercar Hyper-Speed Night Tunnel Drift",
+        "prompt": "Create a sleek 30-second commercial-grade video of an exotic electric hypercar drifting through a futuristic illuminated underwater glass tunnel, glowing tire streaks, roaring aero turbine sound, high-energy modern bass soundtrack.",
+    },
+    {
+        "title": "Medieval Dragon Siege over Mountain Castle",
+        "prompt": "Create an epic 30-second fantasy cinematic video of an ancient stone castle perched on mist-shrouded mountain peaks, a massive winged fire dragon soaring overhead in defense of the fortress, thunderous wings, soaring orchestral fantasy score.",
+    },
+    {
+        "title": "Space Station Zero-Gravity Earth Orbital View",
+        "prompt": "Create a stunning 30-second IMAX-quality video from the observation deck of an orbital space station. Looking down at planet Earth rotating below with glowing city lights and atmospheric aurora borealis, serene celestial ambient music.",
+    },
+    {
+        "title": "Steampunk Airship Fleet Sailing Through Sunlit Clouds",
+        "prompt": "Create a detailed 30-second cinematic video of giant brass and mahogany steampunk zeppelins sailing between golden sunlit storm clouds, spinning copper propellers and glowing pressure gauges, grand adventurous brass symphony.",
+    },
+    {
+        "title": "AI Robotics Autonomous Factory of the Year 2050",
+        "prompt": "Create a 30-second showcase video of an advanced humanoid robotics assembly facility. High-precision robotic arms collaborating seamlessly with bipedal humanoid androids assembling quantum microprocessors, crisp mechanical audio and futuristic synth beats.",
+    },
+    {
+        "title": "Viking Longship Navigating Arctic Glaciers",
+        "prompt": "Create a cinematic 30-second video of a rugged Viking longship navigating through towering blue Arctic glaciers and icebergs under shimmering green Northern Lights, dramatic waves crashing, Norse chanting and deep drum score.",
+    },
+    {
+        "title": "Futuristic Solar City with High-Speed Maglev Train",
+        "prompt": "Create a bright, optimistic 30-second video of an eco-futuristic solar city with vertical gardens on skyscrapers, ultra-sleek high-speed maglev train soaring across elevated transparent tube tracks, modern upbeat ambient electronic music.",
+    },
+]
 
 
 def utcnow() -> datetime:
@@ -127,17 +182,41 @@ class AutonomousWorkerEngine:
         target_task_id: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         """
-        Polls for the highest priority task ready to execute, verifies dependencies,
-        selects an eligible Emergent account under the 50% credit ceiling, and executes
-        the next checkpoint step.
+        Polls for tasks and executes REAL work on the active eligible Emergent account.
+        If no tasks exist in queue, automatically feeds the next creative video task
+        to ensure continuous 100% credit consumption until operator issues STOP.
         """
         system_state = self.get_system_state(db)
         if not force_run and system_state.status != "RUNNING":
             logger.debug(f"Worker engine idle: system is {system_state.status}")
             return None
 
-        # Recover any timed-out tasks first
+        # 1. Ensure single concurrent execution: If an Emergent task is already IN_PROGRESS, wait for it
+        active_task = (
+            db.query(AutonomousTask)
+            .filter(AutonomousTask.status.in_(["IN_PROGRESS", "RUNNING"]))
+            .first()
+        )
+        if active_task:
+            return None
+
+        # Recover any timed-out tasks
         self.recover_orphaned_tasks(db)
+
+        # 2. Resolve the Active Eligible Worker Account (with auto-failover if credits < 5)
+        account = get_or_failover_active_account(db)
+        if not account:
+            logger.warning("Worker engine: No active or standby account with available credits found in pool.")
+            return None
+
+        # 3. Find targeted or next queued task
+        priority_order = case(
+            (AutonomousTask.priority == "CRITICAL", 4),
+            (AutonomousTask.priority == "HIGH", 3),
+            (AutonomousTask.priority == "MEDIUM", 2),
+            (AutonomousTask.priority == "LOW", 1),
+            else_=0,
+        )
 
         queued_task = None
         if target_task_id:
@@ -149,84 +228,125 @@ class AutonomousWorkerEngine:
                 queued_task = target
 
         if not queued_task:
-            # 1. Promote PLANNED / BLOCKED tasks to QUEUED if dependencies are satisfied
+            # Promote ready PLANNED tasks
             candidate_tasks = db.query(AutonomousTask).filter(AutonomousTask.status.in_(["PLANNED", "BLOCKED"])).all()
             for pt in candidate_tasks:
                 is_ready, blocker = self.brain.check_task_dependencies(pt, db)
                 if is_ready:
                     pt.status = "QUEUED"
                     pt.error_details = None
-                else:
-                    pt.status = "BLOCKED"
-                    pt.error_details = f"Blocked on prerequisite task: {blocker}"
             db.commit()
-
-            # 2. Priority Scheduling: CRITICAL (4) > HIGH (3) > MEDIUM (2) > LOW (1)
-            priority_order = case(
-                (AutonomousTask.priority == "CRITICAL", 4),
-                (AutonomousTask.priority == "HIGH", 3),
-                (AutonomousTask.priority == "MEDIUM", 2),
-                (AutonomousTask.priority == "LOW", 1),
-                else_=0,
-            )
 
             queued_task = (
                 db.query(AutonomousTask)
-                .filter(
-                    AutonomousTask.status.in_(["QUEUED", "CHECKPOINT"]),
-                    AutonomousTask.is_mock == True,
-                    AutonomousTask.execution_adapter != "EMERGENT_BROWSER_ADAPTER",
-                )
+                .filter(AutonomousTask.status == "QUEUED")
                 .order_by(priority_order.desc(), AutonomousTask.created_at.asc())
                 .first()
             )
 
+        # 4. Auto-Feed Continuous Generation: If queue is empty, generate next creative task!
+        if not queued_task:
+            queued_task = self._auto_generate_next_creative_task(account, db)
+
         if not queued_task:
             return None
 
-        # 3. Account Selection & 50% Credit Guard
-        account = None
-        if queued_task.assigned_account_id:
-            acc = db.query(EmergentAccount).filter(EmergentAccount.id == queued_task.assigned_account_id).first()
-            if acc:
-                budget = self.scheduler.get_or_create_budget(acc.id, db)
-                is_eligible, reason = self.scheduler.evaluate_account_eligibility(budget, db, current_task_id=queued_task.id)
-                if is_eligible:
-                    account = acc
-                else:
-                    logger.info(f"Assigned account {acc.account_name} not eligible ({reason}). Attempting rotation.")
+        # 5. Dispatch task directly to REAL Emergent Browser Session (100% Real, Zero Mock!)
+        queued_task.status = "IN_PROGRESS"
+        queued_task.assigned_account_id = account.id
+        queued_task.execution_adapter = "EMERGENT_BROWSER_ADAPTER"
+        queued_task.is_mock = False
+        queued_task.worker_id = self.worker_id
+        queued_task.started_at = utcnow()
+        queued_task.last_heartbeat_at = utcnow()
+        db.commit()
 
-        if not account:
-            selection = self.scheduler.select_eligible_account(
-                work_type=queued_task.work_type,
-                estimated_cost=queued_task.estimated_credit_cost,
-                db=db,
-            )
-            if not selection:
-                logger.warning(f"No eligible account available for task {queued_task.task_identifier}. Waiting for account availability.")
-                queued_task.status = "BLOCKED"
-                queued_task.error_classification = "CREDIT_CEILING_REACHED"
-                queued_task.error_details = "All Emergent accounts have reached their 50% Planned Usage Ceiling or have invalid sessions."
-                db.commit()
-                return None
-            account, _ = selection
-            queued_task.assigned_account_id = account.id
+        # Find or create a conversation for activity logs
+        conv = db.query(Conversation).first()
+        conv_id = conv.id if conv else 1
 
-        # 4. Reserve budget before execution
-        reserved = self.scheduler.reserve_budget(
-            account_id=account.id,
+        prompt_text = queued_task.description or queued_task.title
+        schedule_emergent_browser_task(
             task_id=queued_task.id,
-            estimated_cost=queued_task.estimated_credit_cost,
+            account_id=account.id,
+            conversation_id=conv_id,
+            prompt=prompt_text,
+            work_type=queued_task.work_type or "VIDEO_CREATION",
+            is_hinglish=True,
+        )
+
+        logger.info(
+            f"Autonomous Worker dispatched REAL task {queued_task.task_identifier} "
+            f"('{queued_task.title}') on Active Account '{account.account_name}' (ID: {account.id})"
+        )
+
+        self._log_event(
+            task_id=queued_task.id,
+            level="INFO",
+            message=f"Dispatched real task to Emergent Studio on Account '{account.account_name}' ({account.id}).",
+            step="EMERGENT_DISPATCHED",
             db=db,
         )
-        if not reserved:
-            queued_task.status = "BLOCKED"
-            queued_task.error_details = "Failed to reserve budget within 50% ceiling."
-            db.commit()
-            return None
 
-        # 5. Execute next step
-        return self._execute_task_step(queued_task, account, db)
+        return {
+            "task_id": queued_task.task_identifier,
+            "status": "IN_PROGRESS",
+            "account_name": account.account_name,
+            "title": queued_task.title,
+            "is_real": True,
+        }
+
+    def _auto_generate_next_creative_task(
+        self,
+        account: EmergentAccount,
+        db: Session,
+    ) -> Optional[AutonomousTask]:
+        """
+        Generates a new real high-impact creative video task from the curated prompt pool
+        to ensure continuous credit consumption on the active account.
+        """
+        total_tasks = db.query(func.count(AutonomousTask.id)).scalar() or 0
+        prompt_data = CREATIVE_PROMPT_POOL[total_tasks % len(CREATIVE_PROMPT_POOL)]
+
+        task_ident = f"TASK-AUTO-VID-{uuid.uuid4().hex[:8]}"
+        new_task = AutonomousTask(
+            task_identifier=task_ident,
+            instruction_id=None,
+            work_type="VIDEO_CREATION",
+            title=prompt_data["title"],
+            description=prompt_data["prompt"],
+            expected_result="Single continuous scene 30-sec video rendered in crystal clear HD with custom audio & synced voiceover.",
+            priority="HIGH",
+            status="QUEUED",
+            is_mock=False,
+            execution_adapter="EMERGENT_BROWSER_ADAPTER",
+            assigned_account_id=account.id,
+            estimated_credit_cost=Decimal("10.0000"),
+            actual_credit_cost=Decimal("0.0000"),
+            retry_count=0,
+            max_retries=2,
+            acceptance_criteria=json.dumps([
+                "Custom chapter narrative arc and visual pacing",
+                "Scene-specific illustrated storyboard prompts",
+                "Synchronized spoken voiceover narration",
+                "Rendered H.264 MP4 with AAC audio",
+                "Verified artifact stored and downloadable",
+            ]),
+            created_at=utcnow(),
+            updated_at=utcnow(),
+        )
+        db.add(new_task)
+        db.commit()
+        db.refresh(new_task)
+
+        self._log_event(
+            task_id=new_task.id,
+            level="INFO",
+            message=f"Continuous Worker Auto-Feeder generated new creative task '{new_task.title}' for Account '{account.account_name}'.",
+            step="AUTO_FEED_GENERATED",
+            db=db,
+        )
+        return new_task
 
     def _execute_task_step(
         self,

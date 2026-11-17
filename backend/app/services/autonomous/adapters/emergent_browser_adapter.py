@@ -109,6 +109,14 @@ def _post_chat_update(
 ) -> None:
     db = SessionLocal()
     try:
+        from app.models.chat import Conversation
+        if not conversation_id or conversation_id <= 0:
+            first_c = db.query(Conversation).first()
+            if first_c:
+                conversation_id = first_c.id
+            else:
+                return
+
         action_plan = (
             json.dumps({
                 "title": plan_title,
@@ -131,6 +139,8 @@ def _post_chat_update(
         )
         db.add(msg)
         db.commit()
+    except Exception as ex_post:
+        logger.debug(f"_post_chat_update note: {ex_post}")
     finally:
         db.close()
 
