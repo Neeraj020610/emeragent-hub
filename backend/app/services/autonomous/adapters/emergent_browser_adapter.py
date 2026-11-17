@@ -391,6 +391,31 @@ def _is_valid_video_bytes(data: bytes, content_type: str = "") -> bool:
     return ct.startswith("video/")
 
 
+def _optimize_mp4_for_web_streaming(file_path: str) -> None:
+    """Moves moov atom to the front (+faststart) so HTML5 browsers stream instantly without 0:00 stall."""
+    import shutil
+    import subprocess
+    try:
+        tmp_out = f"{file_path}.fast.mp4"
+        cmd = ["ffmpeg", "-y", "-i", file_path, "-c", "copy", "-movflags", "+faststart", tmp_out]
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+        if res.returncode == 0 and os.path.exists(tmp_out) and os.path.getsize(tmp_out) > 50000:
+            shutil.move(tmp_out, file_path)
+            logger.info(f"FastStart applied successfully to {file_path}")
+    except Exception as e:
+        logger.warning(f"FastStart optimization note: {e}")
+
+
+def _generate_video_poster(video_path: str, poster_path: str) -> None:
+    """Extracts a poster frame from the video so the browser displays an instant thumbnail instead of black box."""
+    import subprocess
+    try:
+        cmd = ["ffmpeg", "-y", "-ss", "00:00:01", "-i", video_path, "-vframes", "1", "-q:v", "2", poster_path]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+    except Exception as e:
+        logger.warning(f"Poster frame generation note: {e}")
+
+
 async def _detect_emergent_video_asset(page: Page) -> Optional[str]:
     """Finds a fully rendered MP4/WebM video source URL inside Emergent Studio."""
     try:
@@ -929,6 +954,13 @@ async def _execute_emergent_browser_workflow(
 
                             with open(local_mp4, "wb") as f:
                                 f.write(raw_bytes)
+
+                            # Optimize MP4 with FastStart (moov atom at beginning) so browsers stream instantly
+                            _optimize_mp4_for_web_streaming(local_mp4)
+                            # Generate video poster thumbnail
+                            poster_path = os.path.join(video_dir, f"{task_identifier}-poster.jpg")
+                            _generate_video_poster(local_mp4, poster_path)
+
                             downloaded_video_path = local_mp4
                             generation_done = True
                             break

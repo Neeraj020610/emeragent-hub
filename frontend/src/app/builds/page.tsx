@@ -1934,11 +1934,11 @@ function BuildsContent() {
                             key={`${activeArtifactTask.id}-${activeArtifactTask.task_identifier}-${activeArtifactTask.status}`}
                             controls
                             playsInline
-                            preload="metadata"
+                            preload="auto"
                             poster={`/artifacts/videos/${activeArtifactTask.task_identifier}-poster.jpg`}
                             className="w-full h-full object-contain"
                           >
-                            <source src={`/artifacts/videos/${activeArtifactTask.task_identifier}.mp4`} type="video/mp4" />
+                            <source src={`/artifacts/videos/${activeArtifactTask.task_identifier}.mp4?v=${activeArtifactTask.id}`} type="video/mp4" />
                             <source src={`/api/v1/autonomous/tasks/${activeArtifactTask.id}/video`} type="video/mp4" />
                             Your browser does not support the video tag.
                           </video>
@@ -1957,33 +1957,25 @@ function BuildsContent() {
                           </div>
 
                           <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleDownloadVideo(activeArtifactTask)}
-                              disabled={downloadingTaskId === activeArtifactTask.id}
-                              className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs flex items-center gap-2 shadow-lg hover:shadow-purple-500/25 transition-all cursor-pointer disabled:opacity-60"
-                            >
-                              {downloadingTaskId === activeArtifactTask.id ? (
-                                <>
-                                  <div className="w-3.5 h-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                                  <span>Downloading...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Download className="w-4 h-4" />
-                                  <span>Download MP4 Video</span>
-                                </>
-                              )}
-                            </button>
-
                             <a
                               href={`/download/artifacts/videos/${activeArtifactTask.task_identifier}.mp4`}
                               download={`${activeArtifactTask.task_identifier}.mp4`}
-                              className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-medium text-xs border border-slate-700 flex items-center gap-1.5 transition-colors"
-                              title="Direct Server Download (Nginx Faststream)"
+                              className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs flex items-center gap-2 shadow-lg hover:shadow-purple-500/25 transition-all cursor-pointer"
+                              title="Instant Native Download"
                             >
-                              <Download className="w-3 h-3 text-slate-400" />
-                              <span>Direct Link</span>
+                              <Download className="w-4 h-4" />
+                              <span>Download MP4 Video</span>
+                            </a>
+
+                            <a
+                              href={`/artifacts/videos/${activeArtifactTask.task_identifier}.mp4`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-medium text-xs border border-slate-700 flex items-center gap-1.5 transition-colors"
+                              title="Open Video Stream in New Tab"
+                            >
+                              <ExternalLink className="w-3 h-3 text-slate-400" />
+                              <span>Open in Tab</span>
                             </a>
                           </div>
                         </div>
