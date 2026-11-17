@@ -193,6 +193,9 @@ function AccountsContent() {
             owner_user_id: d.owner_user_id,
             owner_name: d.owner_name || "Enterprise Admin",
             owner_email: d.owner_email || null,
+            busy_with_user_id: d.busy_with_user_id || null,
+            busy_with_user_name: d.busy_with_user_name || null,
+            busy_with_user_email: d.busy_with_user_email || null,
             created_at: d.created_at || null,
             ownership_type: (d.ownership_type as any) || "COMPANY_OWNED",
             description: d.description || "",
@@ -672,7 +675,7 @@ function AccountsContent() {
   });
 
   // Category Classification Helpers
-  const isAccountActiveWorker = (a: AccountItem) => a.id === activeWorkerId;
+  const isAccountActiveWorker = (a: AccountItem) => Boolean(a.busy_with_user_name) || a.id === activeWorkerId;
   const isAccountInStandby = (a: AccountItem) => a.id !== activeWorkerId && standbyQueueMap[a.id] !== undefined;
   const isAccountExhausted = (a: AccountItem) => {
     const s = (a.connection_status || "").toUpperCase();
@@ -807,6 +810,16 @@ function AccountsContent() {
 
     const acc = itemOrStatus;
     const s = (acc.connection_status || "").toUpperCase();
+
+    // 0. Dedicated Worker for User (Multi-User Parallel Concurrency)
+    if (acc.busy_with_user_name) {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-purple-100 text-purple-900 border border-purple-300 shadow-2xs">
+          <span className="w-1.5 h-1.5 rounded-full bg-purple-600 animate-pulse" />
+          Busy ({acc.busy_with_user_name})
+        </span>
+      );
+    }
 
     // 1. Strict Active Worker Gate
     if (acc.id === activeWorkerId) {

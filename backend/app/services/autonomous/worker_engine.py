@@ -156,6 +156,11 @@ class AutonomousWorkerEngine:
                 budget = db.query(AccountCreditBudget).filter(AccountCreditBudget.account_id == task.assigned_account_id).first()
                 if budget and budget.active_task_id == task.id:
                     budget.active_task_id = None
+                acc = db.query(EmergentAccount).filter(EmergentAccount.id == task.assigned_account_id).first()
+                if acc:
+                    acc.busy_with_user_id = None
+                    acc.busy_with_user_name = None
+                    acc.busy_with_user_email = None
 
             if task.retry_count < task.max_retries:
                 task.retry_count += 1
@@ -201,22 +206,20 @@ class AutonomousWorkerEngine:
         # 1. Crash/Orphan Recovery: Recover any tasks whose worker died or heartbeat timed out
         self.recover_orphaned_tasks(db, timeout_minutes=3)
 
-        # 2. Ensure single concurrent execution: If an Emergent task is actively IN_PROGRESS, wait for it
-        active_task = (
+        # 2. Check active running tasks and server capacity guard (max 5 parallel workers)
+        active_tasks = (
             db.query(AutonomousTask)
             .filter(AutonomousTask.status.in_(["IN_PROGRESS", "RUNNING"]))
-            .first()
+            .all()
         )
-        if active_task:
+        if len(active_tasks) >= 5:
             return None
 
-        # 3. Resolve the Active Eligible Worker Account (with auto-failover if credits < 5)
-        account = get_or_failover_active_account(db)
-        if not account:
-            logger.warning("Worker engine: No active or standby account with available credits found in pool.")
-            return None
+        # 3. Identify users who currently have an IN_PROGRESS task
+        # (Enforces strict sequential execution for the same user!)
+        busy_user_ids = {t.user_id for t in active_tasks if t.user_id is not None}
 
-        # 3. Find targeted or next queued task
+        # 4. Priority Order definition
         priority_order = case(
             (AutonomousTask.priority == "CRITICAL", 4),
             (AutonomousTask.priority == "HIGH", 3),
@@ -244,26 +247,53 @@ class AutonomousWorkerEngine:
                     pt.error_details = None
             db.commit()
 
-            queued_task = (
-                db.query(AutonomousTask)
-                .filter(AutonomousTask.status == "QUEUED")
-                .order_by(priority_order.desc(), AutonomousTask.created_at.asc())
-                .first()
-            )
+            # Query queued tasks: skip users who already have an IN_PROGRESS task (fair multi-user scheduling)
+            q_query = db.query(AutonomousTask).filter(AutonomousTask.status == "QUEUED")
+            if busy_user_ids:
+                q_query = q_query.filter(or_(AutonomousTask.user_id.is_(None), ~AutonomousTask.user_id.in_(busy_user_ids)))
 
-        # 4. Auto-Feed Continuous Generation: If queue is empty, generate next creative task!
-        if not queued_task:
-            queued_task = self._auto_generate_next_creative_task(account, db)
+            queued_task = q_query.order_by(priority_order.desc(), AutonomousTask.created_at.asc()).first()
+
+        # 5. Auto-Feed Continuous Generation: If queue is completely empty across all users and no active tasks
+        if not queued_task and len(active_tasks) == 0:
+            active_account = get_or_failover_active_account(db)
+            if active_account:
+                queued_task = self._auto_generate_next_creative_task(active_account, db)
 
         if not queued_task:
             return None
 
-        # 5. Dispatch task directly to REAL Emergent Browser Session (100% Real, Zero Mock!)
+        # 6. Allocate dedicated worker account for this task / user
+        account_selection = self.scheduler.select_eligible_account(
+            work_type=queued_task.work_type,
+            estimated_cost=queued_task.estimated_credit_cost,
+            db=db,
+            requesting_user_id=queued_task.user_id,
+        )
+        if not account_selection:
+            logger.warning(
+                f"Worker engine: No available account in pool for task #{queued_task.id} "
+                f"(User: {queued_task.user_name or queued_task.user_id}). Waiting for next free worker."
+            )
+            return None
+
+        account, budget = account_selection
+
+        # 7. Tag account as busy with this user and connect it
+        account.busy_with_user_id = queued_task.user_id
+        account.busy_with_user_name = queued_task.user_name or "Admin"
+        account.busy_with_user_email = queued_task.user_email
+        account.connection_status = "CONNECTED"
+        account.last_connected_at = utcnow()
+        account.updated_at = utcnow()
+        budget.active_task_id = queued_task.id
+
+        # 8. Dispatch task directly to REAL Emergent Browser Session (100% Real, Zero Mock!)
         queued_task.status = "IN_PROGRESS"
         queued_task.assigned_account_id = account.id
         queued_task.execution_adapter = "EMERGENT_BROWSER_ADAPTER"
         queued_task.is_mock = False
-        queued_task.worker_id = self.worker_id
+        queued_task.worker_id = f"worker-user-{queued_task.user_id or 'sys'}"
         queued_task.started_at = utcnow()
         queued_task.last_heartbeat_at = utcnow()
         db.commit()

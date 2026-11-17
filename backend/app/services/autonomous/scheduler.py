@@ -187,19 +187,26 @@ class AccountCreditScheduler:
         work_type: str,
         estimated_cost: Decimal,
         db: Session,
+        requesting_user_id: Optional[int] = None,
     ) -> Optional[Tuple[EmergentAccount, AccountCreditBudget]]:
         """
         Selects an eligible account with a valid session and sufficient available budget (100% full usage).
-        Prioritizes the currently active single worker account.
+        Supports multi-user concurrency: does NOT pick an account currently busy with a different user.
+        Prioritizes user affinity account, then connected account, then idle standby.
         """
         all_accounts = db.query(EmergentAccount).filter(EmergentAccount.status == "active").all()
-        candidates: List[Tuple[EmergentAccount, AccountCreditBudget, Decimal]] = []
+        candidates: List[Tuple[EmergentAccount, AccountCreditBudget, Decimal, int]] = []
 
         for acc in all_accounts:
+            # Multi-User Concurrency Guard: Skip accounts busy with another user
+            if requesting_user_id is not None and acc.busy_with_user_id is not None and acc.busy_with_user_id != requesting_user_id:
+                continue
+            if requesting_user_id is None and acc.busy_with_user_id is not None:
+                continue
+
             budget = self.get_or_create_budget(acc.id, db)
             is_eligible, reason = self.evaluate_account_eligibility(budget, db)
             if not is_eligible:
-                logger.warning(f"Account {acc.id} ({acc.account_name}) ineligible: {reason}")
                 continue
 
             ceiling_limit = budget.starting_balance if budget.starting_balance > Decimal("0") else Decimal("999999.00")
@@ -212,15 +219,18 @@ class AccountCreditScheduler:
             if estimated_cost > Decimal("0.0000") and estimated_cost > remaining_headroom:
                 continue
 
-            # Prioritize currently CONNECTED active worker account
-            is_active_worker = 1 if acc.connection_status == "CONNECTED" else 0
-            candidates.append((acc, budget, remaining_headroom, is_active_worker))
+            # User affinity priority:
+            # 2 = Account already assigned to this user
+            # 1 = Connected active worker without user lock
+            # 0 = Idle standby pool
+            user_affinity = 2 if (requesting_user_id is not None and acc.busy_with_user_id == requesting_user_id) else (1 if acc.connection_status == "CONNECTED" and acc.busy_with_user_id is None else 0)
+            candidates.append((acc, budget, remaining_headroom, user_affinity))
 
         if not candidates:
             logger.warning("No eligible account found with active session or available credits.")
             return None
 
-        # Sort: currently active worker first (-x[3]), then strict FIFO creation order (x[0].id ASC)
+        # Sort: Highest affinity first (-x[3]), then strict FIFO creation order (x[0].id ASC)
         candidates.sort(key=lambda x: (-x[3], x[0].id))
         selected_acc, selected_budget, _, _ = candidates[0]
         return selected_acc, selected_budget
@@ -314,9 +324,14 @@ class AccountCreditScheduler:
             )
             db.add(new_snap)
 
-        # Unlink active task
+        # Unlink active task and release user busy tag
         if budget.active_task_id == task_id:
             budget.active_task_id = None
+        acc = db.query(EmergentAccount).filter(EmergentAccount.id == account_id).first()
+        if acc:
+            acc.busy_with_user_id = None
+            acc.busy_with_user_name = None
+            acc.busy_with_user_email = None
 
         # Re-check ceiling and trigger account rotation if reached
         self.evaluate_account_eligibility(budget, db)

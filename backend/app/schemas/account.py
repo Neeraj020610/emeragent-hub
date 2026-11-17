@@ -99,6 +99,9 @@ class EmergentAccountResponse(EmergentAccountBase):
     owner_email: Optional[str] = None
     mailbox_email: Optional[str] = None
     connection_status: str
+    busy_with_user_id: Optional[int] = None
+    busy_with_user_name: Optional[str] = None
+    busy_with_user_email: Optional[str] = None
     credit_sync_status: str = "manual_only"
     last_connected_at: Optional[datetime] = None
     last_synced_at: Optional[datetime] = None

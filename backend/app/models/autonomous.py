@@ -53,6 +53,9 @@ class AutonomousTask(Base):
     id = Column(Integer, primary_key=True, index=True)
     task_identifier = Column(String(100), unique=True, index=True, nullable=False)  # e.g. TASK-VID-2026-001
     instruction_id = Column(Integer, ForeignKey("autonomous_instructions.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_name = Column(String(150), nullable=True)
+    user_email = Column(String(255), nullable=True)
     project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     work_type = Column(String(50), nullable=False, index=True)  # VIDEO_CREATION, WEBSITE_APP_DEV
     source = Column(String(50), default="AI_GENERATED", nullable=False)  # AI_GENERATED, MANUAL, IMPORTED

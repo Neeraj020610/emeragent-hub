@@ -23,6 +23,11 @@ class EmergentAccount(Base):
     ownership_type = Column(String(50), default="COMPANY_OWNED", nullable=False)  # COMPANY_OWNED, PERSONAL
     description = Column(Text, nullable=True)
 
+    # Multi-User Dedicated Worker Tracking
+    busy_with_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    busy_with_user_name = Column(String(150), nullable=True)
+    busy_with_user_email = Column(String(255), nullable=True)
+
     status = Column(String(50), default="active", nullable=False)  # active, suspended, pending
     auth_type = Column(String(50), default="oauth", nullable=False)  # oauth, mcp, api_key
     encrypted_password = Column(Text, nullable=True)  # Fernet-encrypted Emergent login password (never stored in plaintext)

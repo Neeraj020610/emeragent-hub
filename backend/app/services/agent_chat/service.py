@@ -514,10 +514,19 @@ class AgentChatService:
             settings.EMERGENT_EXECUTION_ENABLED and auto_execute and active_sess and not force_local_mock
         )
 
+        # Identify requesting user for dedicated worker attribution
+        requesting_user = db.query(User).filter(User.id == conversation.user_id).first() if (conversation and conversation.user_id) else None
+        user_name_val = (requesting_user.full_name or requesting_user.email) if requesting_user else "Admin"
+        user_email_val = requesting_user.email if requesting_user else None
+        user_id_val = requesting_user.id if requesting_user else None
+
         # Create AutonomousTask with clean subject title
         task_identifier = f"TASK-CHAT-{work_type[:3]}-{uuid.uuid4().hex[:8]}"
         task = AutonomousTask(
             task_identifier=task_identifier,
+            user_id=user_id_val,
+            user_name=user_name_val,
+            user_email=user_email_val,
             work_type=work_type,
             source="AI_GENERATED",
             title=plan_spec["title"],
@@ -544,6 +553,10 @@ class AgentChatService:
             created_at=utcnow(),
             updated_at=utcnow(),
         )
+        if use_real_emergent:
+            selected_account.busy_with_user_id = user_id_val
+            selected_account.busy_with_user_name = user_name_val
+            selected_account.busy_with_user_email = user_email_val
         db.add(task)
         db.commit()
         db.refresh(task)

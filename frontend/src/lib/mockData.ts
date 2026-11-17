@@ -11,6 +11,9 @@ export interface AccountItem {
   owner_user_id?: number | null;
   owner_name?: string | null;
   owner_email?: string | null;
+  busy_with_user_id?: number | null;
+  busy_with_user_name?: string | null;
+  busy_with_user_email?: string | null;
   created_at?: string | null;
   ownership_type: "COMPANY_OWNED" | "PERSONAL";
   description?: string | null;
