@@ -29,6 +29,21 @@ async def storage_retention_worker():
         # Run cleanup every 15 minutes
         await asyncio.sleep(900)
 
+async def standby_replenish_background_worker():
+    """Maintains a healthy standby pool of ready/queued accounts."""
+    await asyncio.sleep(8)
+    while True:
+        try:
+            from app.services.session.replenish_service import replenish_standby_pool_once
+            await replenish_standby_pool_once()
+            await asyncio.sleep(25)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.debug(f"Standby replenish worker pass note: {e}")
+            await asyncio.sleep(25)
+
+
 async def autonomous_background_worker():
     """Background polling loop for autonomous tasks and pipeline jobs."""
     engine = AutonomousWorkerEngine()
@@ -105,8 +120,9 @@ async def on_startup():
     finally:
         db.close()
     
-    # Spawn background autonomous worker and 6-hour storage retention worker
+    # Spawn background autonomous worker, standby replenisher, and 6-hour storage retention worker
     asyncio.create_task(autonomous_background_worker())
+    asyncio.create_task(standby_replenish_background_worker())
     asyncio.create_task(storage_retention_worker())
 
 

@@ -258,33 +258,44 @@ async def auto_failover_exhausted_account(exhausted_account_id: int) -> Optional
             db.add(audit)
             db.commit()
 
-        # 2. Pick next eligible standby account with >= 5.0 credits
+        # 2. Pick next eligible standby account or unlogged candidate with credentials
         candidates = (
             db.query(EmergentAccount)
             .filter(
                 EmergentAccount.id != exhausted_account_id,
-                EmergentAccount.connection_status.in_(["STANDBY", "DISCONNECTED", "CONNECTED"]),
+                EmergentAccount.connection_status != "EXHAUSTED",
+                EmergentAccount.status == "active",
             )
             .order_by(EmergentAccount.id.asc())
             .all()
         )
 
         for cand in candidates:
-            # Check if candidate has credits >= 5.0
-            latest_snap = (
-                db.query(CreditSnapshot)
-                .filter(CreditSnapshot.account_id == cand.id)
-                .order_by(CreditSnapshot.id.desc())
-                .first()
-            )
-            if latest_snap and latest_snap.available_credits is not None and latest_snap.available_credits < MIN_USABLE_CREDITS:
-                continue
-            bud = db.query(AccountCreditBudget).filter(AccountCreditBudget.account_id == cand.id).first()
-            if bud and bud.verified_current_balance is not None and bud.verified_current_balance < MIN_USABLE_CREDITS:
+            # Skip any account explicitly marked EXHAUSTED
+            if (cand.connection_status or "").upper() == "EXHAUSTED":
                 continue
 
-            next_account = cand
-            break
+            # If account is already in STANDBY or CONNECTED, verify it has usable credits
+            if (cand.connection_status or "").upper() in ("STANDBY", "CONNECTED"):
+                latest_snap = (
+                    db.query(CreditSnapshot)
+                    .filter(CreditSnapshot.account_id == cand.id)
+                    .order_by(CreditSnapshot.id.desc())
+                    .first()
+                )
+                if latest_snap and latest_snap.available_credits is not None and latest_snap.available_credits < MIN_USABLE_CREDITS:
+                    continue
+                bud = db.query(AccountCreditBudget).filter(AccountCreditBudget.account_id == cand.id).first()
+                if bud and bud.verified_current_balance is not None and bud.verified_current_balance < MIN_USABLE_CREDITS:
+                    continue
+
+                next_account = cand
+                break
+            else:
+                # Account is unlogged (DISCONNECTED / LOGIN REQUIRED). Check if it has credentials
+                if cand.encrypted_password:
+                    next_account = cand
+                    break
 
     finally:
         db.close()

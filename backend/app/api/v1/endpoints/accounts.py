@@ -773,3 +773,16 @@ def get_account_activity(
         .all()
     )
     return logs
+
+
+@router.post("/replenish-standby")
+async def trigger_replenish_standby(
+    current_user: User = Depends(get_current_user),
+):
+    """Triggers automated standby pool replenishment to log in and queue next accounts."""
+    from app.services.session.replenish_service import replenish_standby_pool_once
+    account_id = await replenish_standby_pool_once()
+    if account_id:
+        return {"status": "SUCCESS", "message": f"Successfully authenticated and queued Account #{account_id} into Standby Pool."}
+    return {"status": "IDLE", "message": "Standby pool is already sufficiently populated or candidate is processing."}
+
