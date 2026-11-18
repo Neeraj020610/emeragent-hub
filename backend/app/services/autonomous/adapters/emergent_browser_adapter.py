@@ -725,6 +725,21 @@ async def _execute_emergent_browser_workflow(
             except Exception as tab_err:
                 logger.debug(f"Tab selection note: {tab_err}")
 
+            # Pre-submission check: halt if operator stopped or paused system
+            db_chk = SessionLocal()
+            try:
+                t_chk = db_chk.query(AutonomousTask).filter(AutonomousTask.id == task_id).first()
+                sys_chk = db_chk.query(AutonomousSystemState).first()
+                if not t_chk or t_chk.status in ("CANCELLED", "PAUSED", "STOPPED") or (sys_chk and sys_chk.status == "STOPPED"):
+                    _append_task_log(task_id, "Task halted before prompt submission by STOP/PAUSE.", step="ABORTED", level="WARN")
+                    try:
+                        await page.close()
+                    except Exception:
+                        pass
+                    return
+            finally:
+                db_chk.close()
+
             # Enter prompt into Emergent composer & submit
             await _save_task_screenshot(page, task_identifier)
             current_stage = "Filling prompt and clicking Submit"
@@ -797,12 +812,26 @@ async def _execute_emergent_browser_workflow(
             for poll_idx in range(max_polls):
                 await asyncio.sleep(5.0)
 
-                # Cooperative check for CANCELLED / PAUSED
+                # Cooperative check for CANCELLED / PAUSED / STOPPED
                 db_chk = SessionLocal()
                 try:
                     t_chk = db_chk.query(AutonomousTask).filter(AutonomousTask.id == task_id).first()
-                    if not t_chk or t_chk.status in ("CANCELLED", "PAUSED"):
-                        _append_task_log(task_id, f"Task cooperatively stopped ({t_chk.status if t_chk else 'DELETED'}).", step="ABORTED", level="WARN")
+                    sys_chk = db_chk.query(AutonomousSystemState).first()
+                    if (
+                        not t_chk
+                        or t_chk.status in ("CANCELLED", "PAUSED", "STOPPED")
+                        or (sys_chk and sys_chk.status == "STOPPED")
+                    ):
+                        _append_task_log(
+                            task_id,
+                            f"Task cooperatively stopped ({t_chk.status if t_chk else 'STOPPED'}).",
+                            step="ABORTED",
+                            level="WARN",
+                        )
+                        try:
+                            await page.close()
+                        except Exception:
+                            pass
                         return
                 finally:
                     db_chk.close()

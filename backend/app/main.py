@@ -89,15 +89,11 @@ async def on_startup():
     db = SessionLocal()
     try:
         init_db(db)
-        # Ensure system state is RUNNING
+        # Ensure system state is initialized
         sys_state = db.query(AutonomousSystemState).first()
         if not sys_state:
-            sys_state = AutonomousSystemState(status="RUNNING", last_command="START")
+            sys_state = AutonomousSystemState(status="STOPPED", last_command="STOP")
             db.add(sys_state)
-            db.commit()
-        elif sys_state.status == "STOPPED":
-            sys_state.status = "RUNNING"
-            sys_state.last_command = "START"
             db.commit()
 
         # Cleanly reset any interrupted in-progress tasks from previous reboot

@@ -88,21 +88,52 @@ class AutonomousControlService:
         if cmd == "START":
             state.status = "RUNNING"
             state.active_workers_count = 1
-            # Promote any PLANNED tasks to QUEUED if dependencies ready
-            planned = db.query(AutonomousTask).filter(AutonomousTask.status == "PLANNED").all()
-            for t in planned:
+            # Promote any PLANNED or PAUSED tasks to QUEUED if dependencies ready
+            planned_or_paused = db.query(AutonomousTask).filter(
+                AutonomousTask.status.in_(["PLANNED", "PAUSED"])
+            ).all()
+            for t in planned_or_paused:
                 is_ready, _ = self.brain.check_task_dependencies(t, db)
                 if is_ready:
                     t.status = "QUEUED"
         elif cmd == "PAUSE":
             state.status = "PAUSED"
             state.active_workers_count = 0
+            # Gracefully hold active in-progress tasks
+            in_prog = db.query(AutonomousTask).filter(
+                AutonomousTask.status.in_(["IN_PROGRESS", "RUNNING"])
+            ).all()
+            for t in in_prog:
+                t.status = "PAUSED"
         elif cmd == "RESUME":
             state.status = "RUNNING"
             state.active_workers_count = 1
+            paused_tasks = db.query(AutonomousTask).filter(
+                AutonomousTask.status == "PAUSED"
+            ).all()
+            for t in paused_tasks:
+                t.status = "QUEUED"
         elif cmd == "STOP":
             state.status = "STOPPED"
             state.active_workers_count = 0
+            # 1. Immediately abort & cancel all in-progress, running, and queued tasks
+            active_tasks = db.query(AutonomousTask).filter(
+                AutonomousTask.status.in_(["IN_PROGRESS", "RUNNING", "QUEUED"])
+            ).all()
+            for t in active_tasks:
+                t.status = "CANCELLED"
+                t.error_log = "Stopped immediately by operator STOP command."
+                t.completed_at = utcnow()
+            
+            # 2. Release all active account locks and budget task associations
+            db.query(EmergentAccount).update({
+                EmergentAccount.busy_with_user_id: None,
+                EmergentAccount.busy_with_user_name: None,
+                EmergentAccount.busy_with_user_email: None,
+            })
+            db.query(AccountCreditBudget).update({
+                AccountCreditBudget.active_task_id: None,
+            })
 
         state.updated_at = utcnow()
         db.commit()
