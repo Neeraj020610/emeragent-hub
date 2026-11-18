@@ -1072,6 +1072,47 @@ class AgentChatService:
         cost_val = float(task.actual_credit_cost or 0)
         headroom_str = f" • Eligible Headroom left: `{headroom:.2f}`" if headroom is not None else ""
 
+        # If task is not COMPLETED yet, do NOT output premature completion text!
+        if task.status in ("IN_PROGRESS", "QUEUED", "CHECKPOINT", "PLANNED"):
+            if task.work_type == "VIDEO_CREATION":
+                if is_hinglish:
+                    return (
+                        f"Maine aapke topic **\"{clean_topic}\"** par video generate karna shuru kar diya hai!\n\n"
+                        f"**Run Summary**: Account `{account_name}`{headroom_str} • Status: **{task.status}** • Task ID: `{task.task_identifier}`\n\n"
+                        "Niche live card me real-time blur render aur progress percentage track karein. Render complete hote hi video yahin automatically unlock ho jayega!"
+                    )
+                else:
+                    return (
+                        f"Video generation in progress for **\"{clean_topic}\"**!\n\n"
+                        f"**Run Summary**: Account `{account_name}`{headroom_str} • Status: **{task.status}** • Task ID: `{task.task_identifier}`\n\n"
+                        "Track the live video render and progress percentage in the preview card below. Once finished, your video will be playable right here!"
+                    )
+            else:
+                if is_hinglish:
+                    return (
+                        f"Maine aapke project **\"{clean_topic}\"** par app build shuru kar diya hai!\n\n"
+                        f"**Run Summary**: Account `{account_name}`{headroom_str} • Status: **{task.status}** • Task ID: `{task.task_identifier}`\n\n"
+                        "Niche card me progress track karein."
+                    )
+                else:
+                    return (
+                        f"Build started for **\"{clean_topic}\"**!\n\n"
+                        f"**Run Summary**: Account `{account_name}`{headroom_str} • Status: **{task.status}** • Task ID: `{task.task_identifier}`"
+                    )
+
+        elif task.status == "FAILED":
+            if is_hinglish:
+                return (
+                    f"Topic **\"{clean_topic}\"** par video generation me error aaya (Status: **FAILED**).\n\n"
+                    f"**Run Summary**: Account `{account_name}` • Task ID: `{task.task_identifier}`\n\n"
+                    "Aap niche details check karein ya retry kar sakte hain."
+                )
+            else:
+                return (
+                    f"Task execution encountered an error for **\"{clean_topic}\"** (Status: **FAILED**).\n\n"
+                    f"**Run Summary**: Account `{account_name}` • Task ID: `{task.task_identifier}`"
+                )
+
         scene_bullets = ""
         if script_data and script_data.get("scenes"):
             lines = [
@@ -1087,7 +1128,7 @@ class AgentChatService:
                 )
                 footer = (
                     f"\n\n**Run Summary**: Account `{account_name}`{headroom_str} • Status: **{task.status}** • Credits used: `{cost_val:.4f}` (`{task.task_identifier}`)\n\n"
-                    "Niche **View Generated Deliverables & Script** button par click karke video play aur `.mp4` download karein. Koi scene badalna ho to bataiye!"
+                    "Niche player me video play aur `.mp4` download karein. Koi scene badalna ho to bataiye!"
                 )
             else:
                 intro = (
@@ -1095,7 +1136,7 @@ class AgentChatService:
                 )
                 footer = (
                     f"\n\n**Build Summary**: Executed on `{account_name}`{headroom_str} • Status: **{task.status}** • Credits used: `{cost_val:.4f}` (`{task.task_identifier}`)\n\n"
-                    "Click **View Generated Deliverables & Script** below to watch the video, read the script, or download the `.mp4`. Want me to adjust any scene?"
+                    "Watch the video in the player below or download the `.mp4`. Want me to adjust any scene?"
                 )
             body = f"**Video Chapters Created:**\n{scene_bullets}" if scene_bullets else ""
             return intro + body + footer

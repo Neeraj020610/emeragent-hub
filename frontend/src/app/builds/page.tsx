@@ -244,6 +244,304 @@ interface TaskLog {
   created_at: string;
 }
 
+function ProgressiveVideoChatCard({
+  msg,
+  task: initialTask,
+  onOpenDeliverables,
+  onDownloadVideo,
+  downloadingTaskId,
+}: {
+  msg: Message;
+  task?: AutonomousTask;
+  onOpenDeliverables: (task: AutonomousTask) => void;
+  onDownloadVideo: (task: AutonomousTask) => void;
+  downloadingTaskId: number | null;
+}) {
+  const [task, setTask] = useState<AutonomousTask | undefined>(initialTask);
+  const [percent, setPercent] = useState<number>(() => {
+    if (initialTask?.status === "COMPLETED") return 100;
+    if (initialTask?.status === "QUEUED") return 12;
+    return 20;
+  });
+  const [videoError, setVideoError] = useState(false);
+
+  // Sync if parent updates task
+  useEffect(() => {
+    if (initialTask) {
+      setTask(initialTask);
+    }
+  }, [initialTask]);
+
+  // Fallback fetch if task not provided but task_id exists
+  useEffect(() => {
+    if (!task && msg.task_id) {
+      apiFetch<AutonomousTask>(`/autonomous/tasks/${msg.task_id}`)
+        .then((t) => {
+          if (t) setTask(t);
+        })
+        .catch(() => {});
+    }
+  }, [task, msg.task_id]);
+
+  const status = task ? task.status : (msg.execution_status || "IN_PROGRESS");
+  const isCompleted = status === "COMPLETED";
+  const isFailed = status === "FAILED";
+  const isRunning = !isCompleted && !isFailed;
+
+  // Real-time progressive counter interpolation (ChatGPT/Midjourney style)
+  useEffect(() => {
+    if (isCompleted) {
+      setPercent(100);
+      return;
+    }
+    if (isFailed) return;
+
+    let target = 95;
+    if (task?.checkpoints) {
+      try {
+        const chks = JSON.parse(task.checkpoints);
+        if (Array.isArray(chks)) {
+          const steps = chks.map((c: any) => c.step || "");
+          if (steps.includes("EMERGENT_DELIVERABLE_READY") || steps.includes("VIDEO_RENDERING_ASSEMBLY")) {
+            target = 98;
+          } else if (steps.includes("WAITING_FOR_FULL_RENDER") || steps.includes("EMERGENT_STAGE_APPROVED")) {
+            target = 82;
+          } else if (steps.includes("EMERGENT_WIZARD_ADVANCED")) {
+            target = 65;
+          } else if (steps.includes("EMERGENT_PROMPT_SUBMITTED")) {
+            target = 45;
+          } else if (steps.includes("EMERGENT_SESSION_VERIFIED")) {
+            target = 28;
+          }
+        }
+      } catch {}
+    }
+
+    const timer = setInterval(() => {
+      setPercent((curr) => {
+        if (curr >= target) return curr;
+        const diff = target - curr;
+        const inc = Math.max(1, Math.round(diff * 0.08));
+        return Math.min(target, curr + inc);
+      });
+    }, 900);
+
+    return () => clearInterval(timer);
+  }, [task?.checkpoints, isCompleted, isFailed]);
+
+  // Stage description
+  let stageDescription = "Setting up video environment...";
+  if (isCompleted) {
+    stageDescription = "Video Ready (100%)";
+  } else if (isFailed) {
+    stageDescription = "Generation Paused / Failed";
+  } else if (percent < 25) {
+    stageDescription = "Initializing Studio & Canvas...";
+  } else if (percent < 50) {
+    stageDescription = "Rendering visual scenes & camera angles...";
+  } else if (percent < 75) {
+    stageDescription = "Assembling frame animations & transitions...";
+  } else if (percent < 92) {
+    stageDescription = "Synthesizing voiceover & audio sync...";
+  } else {
+    stageDescription = "Encoding high-definition MP4 output...";
+  }
+
+  const taskId = task?.id || msg.task_id;
+  const taskIdentifier = task?.task_identifier || `TASK-${taskId}`;
+  const videoSrc = `/artifacts/videos/${taskIdentifier}.mp4`;
+  const posterSrc = `/artifacts/videos/${taskIdentifier}-poster.jpg`;
+  const previewImgSrc = taskId ? `/api/v1/autonomous/tasks/${taskId}/preview-image?t=${Math.floor(Date.now() / 4000)}` : "";
+
+  return (
+    <div className="relative w-full rounded-2xl overflow-hidden border border-slate-700/80 bg-slate-950 shadow-2xl transition-all duration-500 my-2">
+      {/* 16:9 Aspect Media Container */}
+      <div className="relative aspect-video w-full overflow-hidden bg-slate-950 flex items-center justify-center">
+        {/* COMPLETED STATE: Clear Unblurred HTML5 Video Player */}
+        {isCompleted && !videoError ? (
+          <video
+            key={`video-${taskIdentifier}`}
+            controls
+            playsInline
+            preload="metadata"
+            poster={posterSrc}
+            className="w-full h-full object-contain rounded-2xl bg-black transition-all duration-700 blur-0 scale-100"
+            onError={() => setVideoError(true)}
+          >
+            <source src={videoSrc} type="video/mp4" />
+            {taskId && <source src={`/api/v1/autonomous/tasks/${taskId}/video`} type="video/mp4" />}
+          </video>
+        ) : (
+          /* IN_PROGRESS OR BLURRED GENERATION CANVAS (ChatGPT style blur) */
+          <div className="relative w-full h-full overflow-hidden flex items-center justify-center">
+            {/* Background live screenshot with blur & scale */}
+            {previewImgSrc && !isFailed ? (
+              <img
+                src={previewImgSrc}
+                alt="Generating preview"
+                className="w-full h-full object-cover transition-all duration-700 filter blur-lg scale-105 opacity-60"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                }}
+              />
+            ) : null}
+
+            {/* Generative ambient glow behind blur */}
+            <div className="absolute inset-0 bg-gradient-to-tr from-slate-950 via-slate-900/90 to-indigo-950/70 pointer-events-none" />
+            <div className="absolute -top-12 -left-12 w-64 h-64 bg-indigo-500/20 rounded-full blur-3xl animate-pulse pointer-events-none" />
+            <div className="absolute -bottom-12 -right-12 w-64 h-64 bg-purple-500/20 rounded-full blur-3xl animate-pulse pointer-events-none" />
+
+            {/* Subtle animated shimmer sheen sweep */}
+            {isRunning && (
+              <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                <div className="w-full h-full bg-gradient-to-r from-transparent via-white/10 to-transparent animate-shimmer" />
+              </div>
+            )}
+
+            {/* Centered Frosted Hub */}
+            <div className="relative z-10 flex flex-col items-center justify-center gap-3 px-6 py-4 rounded-2xl bg-black/50 backdrop-blur-md border border-white/10 shadow-2xl max-w-[85%] text-center">
+              {isRunning ? (
+                <>
+                  <div className="relative flex items-center justify-center">
+                    <div className="w-12 h-12 rounded-full border-2 border-indigo-400/30 border-t-indigo-400 animate-spin" />
+                    <Sparkles className="w-5 h-5 text-indigo-300 absolute animate-pulse" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold text-white tracking-wide flex items-center justify-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
+                      Generating Video
+                    </p>
+                    <p className="text-[11px] text-slate-300 font-medium">
+                      {stageDescription}
+                    </p>
+                  </div>
+                </>
+              ) : isFailed ? (
+                <>
+                  <div className="w-10 h-10 rounded-full bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400">
+                    <AlertCircle className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold text-rose-300">Video Generation Interrupted</p>
+                    <p className="text-[11px] text-slate-400">Click Deliverables to inspect logs or retry prompt.</p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="w-10 h-10 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
+                    <CheckCircle2 className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold text-emerald-300">Video Ready</p>
+                    <p className="text-[11px] text-slate-300">Master video artifact generated and ready for playback.</p>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Top-Left: Studio / Account Badge */}
+        <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/75 backdrop-blur-md border border-white/15 text-[10px] font-bold text-white shadow-lg">
+          <span className={`w-1.5 h-1.5 rounded-full ${isRunning ? "bg-emerald-400 animate-pulse" : isCompleted ? "bg-emerald-400" : "bg-rose-400"}`} />
+          <span>{msg.is_mock ? "LOCAL STUDIO" : "REAL EMERGENT"}</span>
+          {msg.account_name && <span className="text-slate-400 font-normal">• {msg.account_name}</span>}
+        </div>
+
+        {/* Top-Right: Quick Download Button if Completed */}
+        {isCompleted && task && (
+          <button
+            onClick={() => onDownloadVideo(task)}
+            disabled={downloadingTaskId === task.id}
+            className="absolute top-3 right-3 z-20 px-3 py-1.5 rounded-lg bg-black/75 hover:bg-black/90 backdrop-blur-md border border-white/20 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xl transition-all cursor-pointer hover:border-emerald-400/50"
+            title="Download .mp4 video"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-400" />
+            <span>{downloadingTaskId === task.id ? "Downloading..." : "Download MP4"}</span>
+          </button>
+        )}
+
+        {/* BOTTOM-RIGHT CORNER: Floating Percentage Pill Counter */}
+        <div className="absolute bottom-3 right-3 z-20">
+          <div
+            className={`px-3 py-1.5 rounded-full backdrop-blur-md border font-mono text-xs font-bold flex items-center gap-2 shadow-2xl transition-all duration-300 ${
+              isCompleted
+                ? "bg-emerald-950/85 border-emerald-500/50 text-emerald-300 shadow-emerald-950/50"
+                : isFailed
+                ? "bg-rose-950/85 border-rose-500/50 text-rose-300"
+                : "bg-black/85 border-white/20 text-white shadow-[0_0_15px_rgba(59,130,246,0.25)] ring-1 ring-white/10"
+            }`}
+          >
+            {isCompleted ? (
+              <>
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Ready 100%</span>
+              </>
+            ) : isFailed ? (
+              <>
+                <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
+                <span>Failed</span>
+              </>
+            ) : (
+              <>
+                {/* Mini SVG circular percentage ring */}
+                <div className="relative w-4 h-4 flex items-center justify-center">
+                  <svg className="w-4 h-4 transform -rotate-90">
+                    <circle
+                      cx="8"
+                      cy="8"
+                      r="6"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      className="text-slate-700"
+                      fill="transparent"
+                    />
+                    <circle
+                      cx="8"
+                      cy="8"
+                      r="6"
+                      stroke="#60a5fa"
+                      strokeWidth="2"
+                      strokeDasharray={37.7}
+                      strokeDashoffset={37.7 - (37.7 * percent) / 100}
+                      strokeLinecap="round"
+                      className="transition-all duration-500"
+                      fill="transparent"
+                    />
+                  </svg>
+                </div>
+                <span className="tracking-tight">{percent}%</span>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Deliverables & Script Button below media player */}
+      <div className="p-3 bg-slate-900/90 border-t border-slate-800/80 flex items-center justify-between gap-2">
+        <div className="text-[11px] text-slate-400 truncate max-w-[65%]">
+          <span className="text-slate-200 font-semibold">{task?.title || "Video Deliverable"}</span>
+        </div>
+        <button
+          type="button"
+          onClick={async () => {
+            if (task) {
+              onOpenDeliverables(task);
+            } else if (msg.task_id) {
+              const fetched = await apiFetch<AutonomousTask>(`/autonomous/tasks/${msg.task_id}`).catch(() => null);
+              if (fetched) onOpenDeliverables(fetched);
+            }
+          }}
+          className="py-1.5 px-3 rounded-lg bg-indigo-900/50 hover:bg-indigo-900/80 border border-indigo-500/30 hover:border-indigo-500/60 text-indigo-200 font-medium text-xs flex items-center gap-1.5 transition-colors shadow-xs"
+        >
+          <Film className="w-3.5 h-3.5 text-indigo-400" />
+          Deliverables & Script
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function BuildsContent() {
   const searchParams = useSearchParams();
   const initialTab = searchParams.get("tab") === "chat" ? "chat" : searchParams.get("tab") === "jobs" ? "jobs" : "worker";
@@ -1274,7 +1572,21 @@ function BuildsContent() {
                           : "bg-white border border-slate-200 text-slate-800 rounded-bl-none"
                       }`}
                     >
-                      {msg.sender_type === "USER" ? msg.content : renderChatMarkdown(msg.content)}
+                      {msg.sender_type === "USER"
+                        ? msg.content
+                        : (() => {
+                            const matchedTask = msg.task_id
+                              ? currentTask?.id === msg.task_id
+                                ? currentTask
+                                : tasks.find((t) => t.id === msg.task_id)
+                              : undefined;
+                            const isStillRunning = (matchedTask ? matchedTask.status === "IN_PROGRESS" || matchedTask.status === "QUEUED" : msg.execution_status === "IN_PROGRESS");
+                            let contentToRender = msg.content;
+                            if (isStillRunning && (contentToRender.includes("ready kar diya hai") || contentToRender.includes("I've created your animated video"))) {
+                              contentToRender = "🎬 **Video Generation In Progress!**\n\nAapka video studio engine par render ho raha hai. Niche live preview card me real-time blur canvas aur percentage progress track karein. Render complete hote hi full video yahin unlock ho jayega!";
+                            }
+                            return renderChatMarkdown(contentToRender);
+                          })()}
                     </div>
 
                     {/* Attachments */}
@@ -1322,71 +1634,42 @@ function BuildsContent() {
                           }
                         })()}
 
-                        {(() => {
-                          const matchedTask = msg.task_id
-                            ? currentTask?.id === msg.task_id
-                              ? currentTask
-                              : tasks.find((t) => t.id === msg.task_id)
-                            : undefined;
-                          const isLiveEmergentRunning =
-                            !msg.is_mock &&
-                            Boolean(msg.task_id) &&
-                            (matchedTask ? matchedTask.status === "IN_PROGRESS" : msg.execution_status === "IN_PROGRESS");
-                          if (!isLiveEmergentRunning || !msg.task_id) return null;
+                        {/* ChatGPT-Style Progressive Video Generation Card */}
+                        {msg.task_id && (() => {
+                          const matchedTask = currentTask?.id === msg.task_id
+                            ? currentTask
+                            : tasks.find((t) => t.id === msg.task_id);
+
                           return (
-                            <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50/70 p-2.5 space-y-2">
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="inline-flex items-center gap-1.5 text-[10px] font-extrabold px-2 py-0.5 rounded bg-emerald-600 text-white tracking-wide">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                                  REAL EMERGENT STUDIO
-                                </span>
-                                <span className="text-[11px] font-medium text-emerald-800">
-                                  Generating live on app.emergent.sh...
-                                </span>
-                              </div>
-                              <div
-                                onClick={async () => {
-                                  if (matchedTask) {
-                                    setActiveArtifactTask(matchedTask);
-                                  } else {
-                                    const fetched = await apiFetch<AutonomousTask>(`/autonomous/tasks/${msg.task_id}`).catch(() => null);
-                                    if (fetched) setActiveArtifactTask(fetched);
-                                  }
-                                }}
-                                className="cursor-pointer rounded-md overflow-hidden border border-slate-800 bg-slate-950"
-                                title="Click to open full live view"
-                              >
-                                <img
-                                  src={`/api/v1/autonomous/tasks/${msg.task_id}/preview-image?t=${Math.floor(Date.now() / 4000)}`}
-                                  alt="Live Emergent progress"
-                                  className="w-full max-h-56 object-contain bg-slate-950"
-                                  onError={(e) => {
-                                    (e.currentTarget as HTMLImageElement).style.display = "none";
-                                  }}
-                                />
-                              </div>
-                            </div>
+                            <ProgressiveVideoChatCard
+                              msg={msg}
+                              task={matchedTask}
+                              onOpenDeliverables={(t) => setActiveArtifactTask(t)}
+                              onDownloadVideo={handleDownloadVideo}
+                              downloadingTaskId={downloadingTaskId}
+                            />
                           );
                         })()}
+                      </div>
+                    )}
 
-                        {msg.task_id && (
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              const matched = tasks.find((t) => t.id === msg.task_id);
-                              if (matched) {
-                                setActiveArtifactTask(matched);
-                              } else {
-                                const fetched = await apiFetch<AutonomousTask>(`/autonomous/tasks/${msg.task_id}`).catch(() => null);
-                                if (fetched) setActiveArtifactTask(fetched);
-                              }
-                            }}
-                            className="w-full mt-2 py-2 px-3 rounded-lg bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
-                          >
-                            <Film className="w-3.5 h-3.5 text-purple-600" />
-                            View Generated Deliverables & Script
-                          </button>
-                        )}
+                    {/* Standalone Task Video Card if action_plan_json not present */}
+                    {!msg.action_plan_json && msg.task_id && (
+                      <div className="mt-2">
+                        {(() => {
+                          const matchedTask = currentTask?.id === msg.task_id
+                            ? currentTask
+                            : tasks.find((t) => t.id === msg.task_id);
+                          return (
+                            <ProgressiveVideoChatCard
+                              msg={msg}
+                              task={matchedTask}
+                              onOpenDeliverables={(t) => setActiveArtifactTask(t)}
+                              onDownloadVideo={handleDownloadVideo}
+                              downloadingTaskId={downloadingTaskId}
+                            />
+                          );
+                        })()}
                       </div>
                     )}
                   </div>
