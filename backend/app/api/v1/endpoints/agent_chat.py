@@ -130,10 +130,10 @@ def download_attachment(
     if not attachment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
 
-    # Verify user owns the conversation
+    # Verify user owns the conversation - Strictly private to conversation owner (NO Admin/SuperAdmin bypass)
     conv = db.query(Conversation).filter(Conversation.id == attachment.conversation_id).first()
-    if not conv or (conv.user_id != current_user.id and current_user.role.name.upper() not in ("ADMIN", "SUPERADMIN")):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to this attachment.")
+    if not conv or conv.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: Private chat attachment belongs exclusively to its author.")
 
     if not os.path.exists(attachment.file_path):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File missing on server storage.")

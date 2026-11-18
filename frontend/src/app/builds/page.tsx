@@ -649,11 +649,12 @@ function BuildsContent() {
       const convs = await apiFetch<ConversationItem[]>("/agent-chat/conversations").catch(() => []);
       if (convs && convs.length > 0) {
         setConversations(convs);
-        if (!activeUuid) {
+        // Strictly ensure activeUuid belongs to current authenticated user's conversations
+        if (!activeUuid || !convs.some((c) => c.conversation_uuid === activeUuid)) {
           setActiveUuid(convs[0].conversation_uuid);
         }
       } else {
-        // If no conversations exist, auto-create a default chat session
+        // If no conversations exist, auto-create a default chat session for this user
         const newConv = await apiFetch<any>("/agent-chat/conversations", {
           method: "POST",
           body: JSON.stringify({ title: "Emergent Assistant" }),
@@ -662,10 +663,17 @@ function BuildsContent() {
           setConversations([newConv]);
           setActiveUuid(newConv.conversation_uuid);
           setMessages(newConv.messages || []);
+        } else {
+          setConversations([]);
+          setActiveUuid(null);
+          setMessages([]);
         }
       }
     } catch (e) {
       console.error("Chat data error:", e);
+      setConversations([]);
+      setActiveUuid(null);
+      setMessages([]);
     }
   };
 
@@ -705,7 +713,10 @@ function BuildsContent() {
             }
           }
         })
-        .catch(() => {});
+        .catch(() => {
+          setMessages([]);
+          setCurrentTask(null);
+        });
     };
     syncActiveConversation();
     const convInterval = setInterval(syncActiveConversation, 4000);

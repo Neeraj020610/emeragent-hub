@@ -69,7 +69,7 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
 
   const handleLogout = () => {
     clearSession();
-    router.push("/login");
+    window.location.href = "/login";
   };
 
   const sidebarContent = (

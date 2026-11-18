@@ -37,7 +37,7 @@ export function Topbar({ onToggleMobileMenu }: TopbarProps) {
 
   const handleLogout = () => {
     clearSession();
-    router.push("/login");
+    window.location.href = "/login";
   };
 
   const handleSearchSubmit = (e: React.FormEvent) => {

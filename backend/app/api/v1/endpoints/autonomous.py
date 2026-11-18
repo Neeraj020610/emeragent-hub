@@ -191,6 +191,8 @@ def list_tasks(
 ):
     """Lists autonomous tasks across all sources (AI-generated, manual, imported)."""
     query = db.query(AutonomousTask)
+    # Strict Private Chat Task Isolation: Only show system/unassigned tasks or tasks created by current_user
+    query = query.filter((AutonomousTask.user_id == None) | (AutonomousTask.user_id == current_user.id))
     if project_id:
         query = query.filter(AutonomousTask.project_id == project_id)
     if work_type:
@@ -234,6 +236,9 @@ def get_task_detail(
     task = db.query(AutonomousTask).filter(AutonomousTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Task {task_id} not found.")
+    # Strict privacy: if task has a user owner, only that exact user can view it (NO Admin bypass)
+    if task.user_id is not None and task.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: This task belongs to a private user session.")
     return task
 
 
@@ -244,6 +249,12 @@ def get_task_logs(
     db: Session = Depends(get_db),
 ):
     """Retrieves step-by-step execution history and logs for a task."""
+    task = db.query(AutonomousTask).filter(AutonomousTask.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Task {task_id} not found.")
+    # Strict privacy: task logs are strictly private to the task author (NO Admin bypass)
+    if task.user_id is not None and task.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: Task execution logs are private to the author.")
     logs = (
         db.query(AutonomousTaskLog)
         .filter(AutonomousTaskLog.task_id == task_id)
