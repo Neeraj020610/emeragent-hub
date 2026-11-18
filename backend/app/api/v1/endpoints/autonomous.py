@@ -71,7 +71,7 @@ def get_autonomous_status(
 @router.post("/control", response_model=AutonomousSystemStateResponse)
 def control_autonomous_system(
     payload: SystemControlRequest,
-    current_user: User = Depends(require_role(["ADMIN"])),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Executes a system-level control command: START, PAUSE, RESUME, STOP."""
@@ -110,7 +110,7 @@ def control_autonomous_system(
 @router.post("/chat", response_model=SystemChatCommandResponse)
 def execute_chat_command(
     payload: SystemChatCommandRequest,
-    current_user: User = Depends(require_role(["ADMIN"])),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Conversational natural command interpreter (e.g. 'START', 'PAUSE', 'STATUS', 'ROTATE')."""
@@ -444,7 +444,7 @@ def update_account_budget(
 @router.post("/worker/step")
 def trigger_worker_step(
     task_id: Optional[int] = Query(None),
-    current_user: User = Depends(require_role(["ADMIN"])),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """

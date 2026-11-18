@@ -265,6 +265,7 @@ function BuildsContent() {
   const [showStandbyPool, setShowStandbyPool] = useState(false);
   const [tasks, setTasks] = useState<AutonomousTask[]>([]);
   const [instructions, setInstructions] = useState<AutonomousInstruction[]>([]);
+  const [commandLoading, setCommandLoading] = useState(false);
   
   // Modals for Worker
   const [showInstructionModal, setShowInstructionModal] = useState(false);
@@ -416,16 +417,25 @@ function BuildsContent() {
   // Command handlers for Autonomous Worker
   const handleWorkerCommand = async (command: "START" | "PAUSE" | "RESUME" | "STOP") => {
     try {
+      setCommandLoading(true);
+      // Optimistic immediate update so user sees instant feedback
+      const optimisticStatus = command === "STOP" ? "STOPPED" : command === "PAUSE" ? "PAUSED" : "RUNNING";
+      setSystemState((prev) => prev ? { ...prev, status: optimisticStatus, last_command: command } : null);
+
       const s = await apiFetch<SystemState>("/autonomous/control", {
         method: "POST",
         body: JSON.stringify({ command, message: `Builds panel command: ${command}` }),
       });
       if (s) {
         setSystemState(s);
-        fetchWorkerData();
+        await fetchWorkerData();
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Command error:", e);
+      alert(`Command '${command}' note: ${e.message || "Failed"}`);
+      await fetchWorkerData();
+    } finally {
+      setCommandLoading(false);
     }
   };
 
@@ -738,16 +748,18 @@ function BuildsContent() {
 
                 {systemState?.status === "RUNNING" ? (
                   <button
+                    disabled={commandLoading}
                     onClick={() => handleWorkerCommand("PAUSE")}
-                    className="px-3.5 py-2 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 font-semibold text-xs flex items-center gap-1.5 shadow-xs transition-colors"
+                    className="px-3.5 py-2 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 font-semibold text-xs flex items-center gap-1.5 shadow-xs transition-colors disabled:opacity-50"
                   >
                     <Pause className="w-3.5 h-3.5" />
                     PAUSE
                   </button>
                 ) : (
                   <button
+                    disabled={commandLoading}
                     onClick={() => handleWorkerCommand("START")}
-                    className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs flex items-center gap-1.5 shadow-xs transition-colors"
+                    className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs flex items-center gap-1.5 shadow-xs transition-colors disabled:opacity-50"
                   >
                     <Play className="w-3.5 h-3.5 fill-white" />
                     START
@@ -755,11 +767,16 @@ function BuildsContent() {
                 )}
 
                 <button
+                  disabled={commandLoading}
                   onClick={() => handleWorkerCommand("STOP")}
-                  className="px-3.5 py-2 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 font-semibold text-xs flex items-center gap-1.5 shadow-xs transition-colors"
+                  className={`px-3.5 py-2 rounded-lg border font-semibold text-xs flex items-center gap-1.5 shadow-xs transition-colors disabled:opacity-50 ${
+                    systemState?.status === "STOPPED"
+                      ? "bg-rose-100 text-rose-900 border-rose-400"
+                      : "bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-300"
+                  }`}
                 >
                   <Square className="w-3.5 h-3.5 fill-rose-700" />
-                  STOP
+                  {systemState?.status === "STOPPED" ? "STOPPED" : "STOP"}
                 </button>
 
                 <button
@@ -803,23 +820,20 @@ function BuildsContent() {
           {/* Active Dedicated Worker (Currently In Use) */}
           {(() => {
             const activeTaskAccountIds = new Set(
-              tasks.filter((t) => t.status === "IN_PROGRESS" && t.assigned_account_id).map((t) => t.assigned_account_id)
+              tasks.filter((t) => (t.status === "IN_PROGRESS" || t.status === "RUNNING") && t.assigned_account_id).map((t) => t.assigned_account_id)
             );
 
-            const inUseBudgets = budgets.filter(
-              (b) =>
-                activeTaskAccountIds.has(b.account_id) ||
-                b.active_task_id != null ||
-                b.is_in_use ||
-                b.busy_with_user_name != null ||
-                b.connection_status === "CONNECTED"
-            );
+            // An account is actively executing only if the system is RUNNING and an active task or session lock is assigned
+            const isSystemHalted = systemState?.status === "STOPPED" || systemState?.status === "PAUSED";
+            const inUseBudgets = isSystemHalted
+              ? []
+              : budgets.filter(
+                  (b) =>
+                    activeTaskAccountIds.has(b.account_id) ||
+                    (b.active_task_id != null && (b.is_in_use || b.busy_with_user_name != null))
+                );
 
-            // Show active accounts; if none is running, show the 1 primary ready worker
-            const displayActiveBudgets = inUseBudgets.length > 0
-              ? inUseBudgets
-              : budgets.filter((b) => b.is_eligible).slice(0, 1);
-
+            const displayActiveBudgets = inUseBudgets;
             const standbyBudgets = budgets.filter((b) => !displayActiveBudgets.some((ab) => ab.id === b.id));
 
             return (
@@ -829,7 +843,11 @@ function BuildsContent() {
                     <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
                       <TrendingUp className="w-5 h-5 text-emerald-600" />
                       Active Dedicated Worker (Currently In Use)
-                      <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-semibold border ${
+                        displayActiveBudgets.length > 0
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : "bg-slate-100 text-slate-600 border-slate-200"
+                      }`}>
                         {displayActiveBudgets.length} Active {displayActiveBudgets.length === 1 ? "Worker" : "Workers"}
                       </span>
                     </h2>
@@ -845,8 +863,19 @@ function BuildsContent() {
                   </button>
                 </div>
 
-                {/* Grid of only currently in-use accounts */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {/* Empty state when 0 accounts in use */}
+                {displayActiveBudgets.length === 0 ? (
+                  <div className="py-8 px-4 text-center border border-dashed border-slate-200 rounded-xl bg-slate-50/60">
+                    <p className="text-xs font-semibold text-slate-600">
+                      {systemState?.status === "STOPPED"
+                        ? "⏹ Worker platform is STOPPED. All accounts are resting safely in Standby Pool."
+                        : systemState?.status === "PAUSED"
+                        ? "⏸ Worker platform is PAUSED at checkpoint. Standby pool ready below."
+                        : "No tasks are actively executing right now. Accounts are standing by in pool below."}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {displayActiveBudgets.map((b) => {
                     const startBal = parseFloat(b.starting_balance) || 0;
                     const ceilingLimit = parseFloat(b.planned_ceiling_limit) || 0;
@@ -950,6 +979,7 @@ function BuildsContent() {
                     );
                   })}
                 </div>
+              )}
 
                 {/* Collapsible Standby Pool Toggle */}
                 {standbyBudgets.length > 0 && (
