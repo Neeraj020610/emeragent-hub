@@ -15,7 +15,7 @@ from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
 from app.database import SessionLocal
 from app.models.account import EmergentAccount
-from app.models.autonomous import AccountCreditBudget, AutonomousTask, AutonomousTaskLog
+from app.models.autonomous import AccountCreditBudget, AutonomousTask, AutonomousTaskLog, AutonomousSystemState
 from app.models.chat import ConversationMessage
 from app.models.credit import CreditSnapshot
 from app.models.session import AccountSession
@@ -334,6 +334,7 @@ async def _acquire_account_page(
             extra_flags.append("--headless=new")
 
     # Launch detached Chrome with CDP port so the session stays alive across tasks
+    proc = None
     try:
         cmd = [
             browser_exe,
@@ -343,20 +344,34 @@ async def _acquire_account_page(
             "--no-default-browser-check",
             "--disable-blink-features=AutomationControlled",
         ] + extra_flags + ["https://app.emergent.sh/home"]
-        subprocess.Popen(
+        proc = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        for _ in range(16):
-            await asyncio.sleep(0.5)
+        for _ in range(25):
+            await asyncio.sleep(0.8)
             try:
-                browser, page = await _attach_cdp(1500)
+                browser, page = await _attach_cdp(2000)
                 return browser, None, page, False, None
             except Exception:
+                if proc.poll() is not None:
+                    break
                 continue
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Error launching detached Chrome for account {account_id}: {e}")
+
+    # If detached launch failed or timed out, ensure proc is killed and profile locks cleaned before fallback
+    if proc is not None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=2)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    cleanup_stale_profile_locks(profile_dir)
 
     # Fallback: direct persistent context inside this Playwright session
     context = await playwright.chromium.launch_persistent_context(
@@ -372,7 +387,7 @@ async def _acquire_account_page(
     )
     open_pages = [pg for pg in context.pages if not pg.is_closed()]
     page = open_pages[0] if open_pages else await context.new_page()
-    return None, context, page, False, None
+    return None, context, page, True, None
 
 
 def _is_valid_video_bytes(data: bytes, content_type: str = "") -> bool:

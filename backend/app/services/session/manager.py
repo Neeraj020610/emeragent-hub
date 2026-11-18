@@ -43,6 +43,7 @@ def kill_existing_profile_processes(profile_dir: str) -> None:
     try:
         import psutil
         normalized_profile = os.path.normpath(profile_dir).lower()
+        killed_procs = []
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
                 cmdline = proc.info.get('cmdline')
@@ -51,8 +52,11 @@ def kill_existing_profile_processes(profile_dir: str) -> None:
                     if normalized_profile in cmd_str:
                         logger.info(f"Terminating lingering browser process {proc.info['pid']} ({proc.info['name']}) using profile {profile_dir}")
                         proc.kill()
+                        killed_procs.append(proc)
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
+        if killed_procs:
+            psutil.wait_procs(killed_procs, timeout=2)
     except Exception as ex:
         logger.warning(f"Error checking lingering profile processes via psutil: {ex}")
 
@@ -65,9 +69,12 @@ def cleanup_stale_profile_locks(profile_dir: str) -> None:
     lock_names = ["SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"]
     for lock_name in lock_names:
         lock_path = os.path.join(profile_dir, lock_name)
-        if os.path.exists(lock_path):
+        if os.path.lexists(lock_path) or os.path.islink(lock_path):
             try:
-                os.remove(lock_path)
+                if os.path.isdir(lock_path) and not os.path.islink(lock_path):
+                    shutil.rmtree(lock_path, ignore_errors=True)
+                else:
+                    os.unlink(lock_path)
                 logger.info(f"Cleaned up stale lock file: {lock_path}")
             except Exception as e:
                 logger.warning(f"Could not remove lock file {lock_path}: {e}")
