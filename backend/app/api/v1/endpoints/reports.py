@@ -32,13 +32,21 @@ def get_usage_summary(
     total_available = Decimal("0.0000")
     account_reports: List[AccountCreditReport] = []
 
+    # Batch query latest snapshots for all accounts (1 query instead of N queries)
+    acc_ids = [acc.id for acc in accounts]
+    snapshots_query = (
+        db.query(CreditSnapshot)
+        .filter(CreditSnapshot.account_id.in_(acc_ids))
+        .order_by(CreditSnapshot.recorded_at.desc())
+        .all()
+    ) if acc_ids else []
+    latest_snaps = {}
+    for s in snapshots_query:
+        if s.account_id not in latest_snaps:
+            latest_snaps[s.account_id] = s
+
     for acc in accounts:
-        latest_snap = (
-            db.query(CreditSnapshot)
-            .filter(CreditSnapshot.account_id == acc.id)
-            .order_by(CreditSnapshot.recorded_at.desc())
-            .first()
-        )
+        latest_snap = latest_snaps.get(acc.id)
         avail = latest_snap.available_credits if latest_snap else Decimal("0.0000")
         consumed = latest_snap.consumed_credits if latest_snap else Decimal("0.0000")
         allocated = latest_snap.total_allocated if latest_snap else None

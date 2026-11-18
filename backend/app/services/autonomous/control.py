@@ -263,9 +263,8 @@ class AutonomousControlService:
         completed_count = db.query(func.count(AutonomousTask.id)).filter(AutonomousTask.status == "COMPLETED").scalar() or 0
         failed_count = db.query(func.count(AutonomousTask.id)).filter(AutonomousTask.status == "FAILED").scalar() or 0
 
-        # Eligible accounts
-        all_budgets = self.scheduler.list_account_budgets(db)
-        eligible_count = sum(1 for b in all_budgets if b["is_eligible"])
+        # Eligible accounts - query count directly without looping all 240 accounts
+        eligible_count = db.query(func.count(AccountCreditBudget.id)).filter(AccountCreditBudget.is_eligible == True).scalar() or 0
 
         return {
             "total_tasks_queued": queued_count,

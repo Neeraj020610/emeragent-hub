@@ -533,6 +533,7 @@ async def execute_automated_login(
     mailbox_email: Optional[str] = None,
     user_id: Optional[int] = None,
     client_ip: Optional[str] = None,
+    keep_open: bool = False,
 ):
     """
     Complete end-to-end automated Emergent authentication:
@@ -593,16 +594,21 @@ async def execute_automated_login(
     finally:
         db.close()
 
+    p = None
+    browser = None
+    context = None
+    is_linux = os.name != "nt"
+    has_display = bool(os.environ.get("DISPLAY"))
+    should_keep_open = keep_open and has_display
+
     try:
-        append_log(account_id, f"🌐 Launching visible {browser_display_name} (Profile: acc_{account_id})...")
+        append_log(account_id, f"🌐 Launching {browser_display_name} (Profile: acc_{account_id})...")
         append_log(account_id, f"🔒 Zero-Bleed Isolation: Personal Chrome sessions/profiles are untouched.")
 
         cdp_port = 9222 + (account_id % 100)
         cdp_ready = False
         p = await async_playwright().start()
 
-        is_linux = os.name != "nt"
-        has_display = bool(os.environ.get("DISPLAY"))
         extra_flags = []
         if is_linux:
             extra_flags.extend(["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"])
@@ -628,7 +634,7 @@ async def execute_automated_login(
                     browser = await p.chromium.connect_over_cdp(cdp_url)
                     context = browser.contexts[0]
                     page = context.pages[0] if context.pages else await context.new_page()
-        elif is_linux:
+        elif is_linux and has_display:
             import subprocess
             cmd = [
                 browser_exe,
@@ -704,7 +710,10 @@ async def execute_automated_login(
             login_progress[account_id]["status"] = "SUCCESS"
             login_progress[account_id]["step"] = "Authenticated"
             login_progress[account_id]["is_complete"] = True
-            await _keep_browser_open(page, account_id)
+            if should_keep_open:
+                await _keep_browser_open(page, account_id)
+            else:
+                await asyncio.sleep(1.0)
             return
 
         # STEP 3: Fill Credentials
@@ -765,7 +774,10 @@ async def execute_automated_login(
                 append_log(account_id, "🛡️ Cloudflare verification challenge detected in Chrome. Please complete verification and click Login directly in Chrome.", "warn")
                 login_progress[account_id]["step"] = "Waiting for Cloudflare verification in Chrome..."
                 login_progress[account_id]["status"] = "OTP_WAITING"
-                await _keep_browser_open(page, account_id)
+                if should_keep_open:
+                    await _keep_browser_open(page, account_id)
+                else:
+                    await asyncio.sleep(1.0)
                 return
             elif not password:
                 await email_loc.evaluate("e => e.scrollIntoView({block: 'center'})")
@@ -822,7 +834,10 @@ async def execute_automated_login(
                 append_log(account_id, "🛡️ Cloudflare verification challenge appeared in Chrome. Please complete it directly in the Chrome window.", "warn")
                 login_progress[account_id]["step"] = "Waiting for verification in Chrome..."
                 login_progress[account_id]["status"] = "OTP_WAITING"
-                await _keep_browser_open(page, account_id)
+                if should_keep_open:
+                    await _keep_browser_open(page, account_id)
+                else:
+                    await asyncio.sleep(1.0)
                 return
 
             # Check for error alerts on page (e.g. wrong password or captcha)
@@ -847,14 +862,20 @@ async def execute_automated_login(
                 await _scrape_and_record_credits(page, account_id)
                 login_progress[account_id]["status"] = "SUCCESS"
                 login_progress[account_id]["is_complete"] = True
-                await _keep_browser_open(page, account_id)
+                if should_keep_open:
+                    await _keep_browser_open(page, account_id)
+                else:
+                    await asyncio.sleep(1.0)
                 return
 
         if not otp_detected and not credentials_submitted:
             append_log(account_id, "⚠️ Login form could not be submitted automatically. Please click 'Sign in' and submit credentials in Chrome; enter OTP below if prompted.", "warn")
             login_progress[account_id]["step"] = "Waiting for manual login in Chrome..."
             login_progress[account_id]["status"] = "OTP_WAITING"
-            await _keep_browser_open(page, account_id)
+            if should_keep_open:
+                await _keep_browser_open(page, account_id)
+            else:
+                await asyncio.sleep(1.0)
             return
 
         if not otp_detected:
@@ -904,7 +925,10 @@ async def execute_automated_login(
                     await _scrape_and_record_credits(page, account_id)
                     login_progress[account_id]["status"] = "SUCCESS"
                     login_progress[account_id]["is_complete"] = True
-                    await _keep_browser_open(page, account_id)
+                    if should_keep_open:
+                        await _keep_browser_open(page, account_id)
+                    else:
+                        await asyncio.sleep(1.0)
                     return
 
             append_log(account_id, "⚠️ Verification check timed out. If dashboard is open, click 'Confirm Dashboard' in Hub.", "warn")
@@ -914,8 +938,11 @@ async def execute_automated_login(
             append_log(account_id, "ℹ️ You can enter the OTP code manually in the input box below.", "info")
             login_progress[account_id]["status"] = "OTP_WAITING"
 
-        # Keep browser open indefinitely so user can see it
-        await _keep_browser_open(page, account_id)
+        # Keep browser open if UI interactive session
+        if should_keep_open:
+            await _keep_browser_open(page, account_id)
+        else:
+            await asyncio.sleep(1.0)
 
     except Exception as e:
         logger.error(f"Error during automated login: {e}", exc_info=True)
@@ -930,6 +957,24 @@ async def execute_automated_login(
         login_progress[account_id]["status"] = "FAILED"
         login_progress[account_id]["error"] = clean_err
         login_progress[account_id]["is_complete"] = True
+    finally:
+        if not should_keep_open:
+            if context:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+            if browser:
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+            if p:
+                try:
+                    await p.stop()
+                except Exception:
+                    pass
+            active_pages.pop(account_id, None)
 
 
 async def _is_dashboard_page(page: Page) -> bool:

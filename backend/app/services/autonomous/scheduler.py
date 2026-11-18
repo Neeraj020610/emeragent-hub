@@ -368,10 +368,16 @@ class AccountCreditScheduler:
 
     def list_account_budgets(self, db: Session) -> List[Dict]:
         accounts = db.query(EmergentAccount).all()
+        budgets_by_acc = {b.account_id: b for b in db.query(AccountCreditBudget).all()}
         results = []
+        new_budgets = False
         for acc in accounts:
-            budget = self.get_or_create_budget(acc.id, db)
-            self.evaluate_account_eligibility(budget, db)
+            budget = budgets_by_acc.get(acc.id)
+            if not budget:
+                budget = self.get_or_create_budget(acc.id, db)
+                self.evaluate_account_eligibility(budget, db)
+                new_budgets = True
+
             ceiling_limit = (budget.starting_balance * budget.ceiling_percentage) / Decimal("100.00")
             current_committed = budget.credit_usage + budget.reserved_credits
             remaining = max(Decimal("0.0000"), ceiling_limit - current_committed)
@@ -406,4 +412,9 @@ class AccountCreditScheduler:
                 "created_at": budget.created_at,
                 "updated_at": budget.updated_at,
             })
+        if new_budgets:
+            try:
+                db.commit()
+            except Exception:
+                pass
         return results

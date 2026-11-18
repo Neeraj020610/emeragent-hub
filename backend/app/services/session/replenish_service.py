@@ -164,11 +164,15 @@ async def replenish_standby_pool_once() -> Optional[int]:
         from app.services.session.login_automation import execute_automated_login, scrape_credits_from_active_session
 
         try:
-            await execute_automated_login(
-                account_id=next_to_login.id,
-                email=next_to_login.email,
-                password=pwd,
-                mailbox_email=next_to_login.email,
+            await asyncio.wait_for(
+                execute_automated_login(
+                    account_id=next_to_login.id,
+                    email=next_to_login.email,
+                    password=pwd,
+                    mailbox_email=next_to_login.email,
+                    keep_open=False,
+                ),
+                timeout=120.0,
             )
 
             # Scrape live balance from genuine Emergent dashboard

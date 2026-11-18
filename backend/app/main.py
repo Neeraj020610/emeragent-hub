@@ -36,12 +36,12 @@ async def standby_replenish_background_worker():
         try:
             from app.services.session.replenish_service import replenish_standby_pool_once
             await replenish_standby_pool_once()
-            await asyncio.sleep(25)
+            await asyncio.sleep(60)
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.debug(f"Standby replenish worker pass note: {e}")
-            await asyncio.sleep(25)
+            await asyncio.sleep(60)
 
 
 async def autonomous_background_worker():

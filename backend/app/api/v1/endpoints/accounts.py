@@ -29,15 +29,33 @@ connection_service = AccountConnectionService()
 emergent_integration_service = EmergentIntegrationService()
 
 
-def _format_account_response(acc: EmergentAccount, db: Session) -> EmergentAccountResponse:
-    from app.models.autonomous import AccountCreditBudget
-    budget = db.query(AccountCreditBudget).filter(AccountCreditBudget.account_id == acc.id).first()
-    latest_snap = (
-        db.query(CreditSnapshot)
-        .filter(CreditSnapshot.account_id == acc.id)
-        .order_by(CreditSnapshot.recorded_at.desc())
-        .first()
-    )
+def _format_account_response(acc: EmergentAccount, db: Session, preloaded: Optional[dict] = None) -> EmergentAccountResponse:
+    if preloaded:
+        budget = preloaded.get("budgets", {}).get(acc.id)
+        latest_snap = preloaded.get("snapshots", {}).get(acc.id)
+        members_count = preloaded.get("member_counts", {}).get(acc.id, 0)
+        conn = preloaded.get("connections", {}).get(acc.id)
+        uni_keys_count = preloaded.get("universal_key_counts", {}).get(acc.id, 0)
+        mb_email = preloaded.get("mailbox_emails", {}).get(acc.id)
+        owner_email = preloaded.get("owner_emails", {}).get(acc.owner_user_id) if acc.owner_user_id else None
+    else:
+        from app.models.autonomous import AccountCreditBudget
+        budget = db.query(AccountCreditBudget).filter(AccountCreditBudget.account_id == acc.id).first()
+        latest_snap = (
+            db.query(CreditSnapshot)
+            .filter(CreditSnapshot.account_id == acc.id)
+            .order_by(CreditSnapshot.recorded_at.desc())
+            .first()
+        )
+        members_count = db.query(AccountPermission).filter(AccountPermission.account_id == acc.id).count()
+        conn = db.query(AccountConnection).filter(AccountConnection.account_id == acc.id).first()
+        from app.models.universal_key import UniversalApiKey
+        uni_keys_count = db.query(UniversalApiKey).filter(UniversalApiKey.account_id == acc.id, UniversalApiKey.is_active == True).count()
+        from app.models.otp import MailboxAccount
+        mailbox = db.query(MailboxAccount).filter(MailboxAccount.account_id == acc.id).first()
+        mb_email = mailbox.email_address if mailbox else None
+        owner_user = db.query(User).filter(User.id == acc.owner_user_id).first() if acc.owner_user_id else None
+        owner_email = owner_user.email if owner_user else None
     
     # Check if account is connected / standby
     is_live = (acc.connection_status or "").upper() in ("CONNECTED", "STANDBY", "ACTIVE")
@@ -47,11 +65,6 @@ def _format_account_response(acc: EmergentAccount, db: Session) -> EmergentAccou
             latest_balance = budget.verified_current_balance
         elif latest_snap and latest_snap.available_credits is not None:
             latest_balance = latest_snap.available_credits
-
-    members_count = db.query(AccountPermission).filter(AccountPermission.account_id == acc.id).count()
-    conn = db.query(AccountConnection).filter(AccountConnection.account_id == acc.id).first()
-    from app.models.universal_key import UniversalApiKey
-    uni_keys_count = db.query(UniversalApiKey).filter(UniversalApiKey.account_id == acc.id, UniversalApiKey.is_active == True).count()
 
     conn_resp = None
     if conn:
@@ -68,13 +81,6 @@ def _format_account_response(acc: EmergentAccount, db: Session) -> EmergentAccou
             has_refresh_token=bool(conn.refresh_token_enc),
             created_at=conn.created_at,
         )
-
-    from app.models.otp import MailboxAccount
-    mailbox = db.query(MailboxAccount).filter(MailboxAccount.account_id == acc.id).first()
-    mb_email = mailbox.email_address if mailbox else None
-
-    owner_user = db.query(User).filter(User.id == acc.owner_user_id).first() if acc.owner_user_id else None
-    owner_email = owner_user.email if owner_user else None
 
     return EmergentAccountResponse(
         id=acc.id,
@@ -164,7 +170,64 @@ def list_accounts(
         query = query.order_by(asc(sort_col))
 
     accounts = query.all()
-    return [_format_account_response(acc, db) for acc in accounts]
+    if not accounts:
+        return []
+
+    from sqlalchemy import func
+    from app.models.autonomous import AccountCreditBudget
+    from app.models.universal_key import UniversalApiKey
+    from app.models.otp import MailboxAccount
+
+    acc_ids = [a.id for a in accounts]
+    owner_ids = list({a.owner_user_id for a in accounts if a.owner_user_id})
+
+    # Batch preload: budgets, snapshots, permissions, connections, keys, mailboxes, owners
+    budgets = {b.account_id: b for b in db.query(AccountCreditBudget).filter(AccountCreditBudget.account_id.in_(acc_ids)).all()}
+
+    snapshots_query = (
+        db.query(CreditSnapshot)
+        .filter(CreditSnapshot.account_id.in_(acc_ids))
+        .order_by(CreditSnapshot.recorded_at.desc())
+        .all()
+    )
+    snapshots = {}
+    for s in snapshots_query:
+        if s.account_id not in snapshots:
+            snapshots[s.account_id] = s
+
+    member_counts = dict(
+        db.query(AccountPermission.account_id, func.count(AccountPermission.id))
+        .filter(AccountPermission.account_id.in_(acc_ids))
+        .group_by(AccountPermission.account_id)
+        .all()
+    )
+
+    connections = {c.account_id: c for c in db.query(AccountConnection).filter(AccountConnection.account_id.in_(acc_ids)).all()}
+
+    universal_key_counts = dict(
+        db.query(UniversalApiKey.account_id, func.count(UniversalApiKey.id))
+        .filter(UniversalApiKey.account_id.in_(acc_ids), UniversalApiKey.is_active == True)
+        .group_by(UniversalApiKey.account_id)
+        .all()
+    )
+
+    mailboxes = {m.account_id: m.email_address for m in db.query(MailboxAccount).filter(MailboxAccount.account_id.in_(acc_ids)).all()}
+
+    owner_emails = {}
+    if owner_ids:
+        owner_emails = {u.id: u.email for u in db.query(User).filter(User.id.in_(owner_ids)).all()}
+
+    preloaded = {
+        "budgets": budgets,
+        "snapshots": snapshots,
+        "member_counts": member_counts,
+        "connections": connections,
+        "universal_key_counts": universal_key_counts,
+        "mailbox_emails": mailboxes,
+        "owner_emails": owner_emails,
+    }
+
+    return [_format_account_response(acc, db, preloaded=preloaded) for acc in accounts]
 
 
 @router.post("", response_model=EmergentAccountResponse, status_code=status.HTTP_201_CREATED)

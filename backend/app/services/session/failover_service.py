@@ -321,11 +321,15 @@ async def auto_failover_exhausted_account(exhausted_account_id: int) -> Optional
         return next_account.id
 
     try:
-        await execute_automated_login(
-            account_id=next_account.id,
-            email=next_account.email,
-            password=pwd,
-            mailbox_email=next_account.email,
+        await asyncio.wait_for(
+            execute_automated_login(
+                account_id=next_account.id,
+                email=next_account.email,
+                password=pwd,
+                mailbox_email=next_account.email,
+                keep_open=False,
+            ),
+            timeout=120.0,
         )
         balance = await scrape_credits_from_active_session(next_account.id)
         if balance is not None and balance >= float(MIN_USABLE_CREDITS):
